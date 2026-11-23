@@ -1,0 +1,221 @@
+@import "@fontsource-variable/bricolage-grotesque";
+@import "@fontsource-variable/geist";
+@import "@fontsource-variable/geist-mono";
+@import "tailwindcss";
+
+/*
+ * VaultPass design tokens.
+ * Warm charcoal ("ink") surfaces, cream as the brand/ink-on-dark colour,
+ * honey as the single accent, plus muted status colours.
+ */
+@theme {
+  --font-display: "Bricolage Grotesque Variable", "Geist Variable", ui-sans-serif, sans-serif;
+  --font-sans: "Geist Variable", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "Geist Mono Variable", ui-monospace, "Cascadia Code", monospace;
+
+  --color-ink-950: #0b0a08;
+  --color-ink-900: #11100d;
+  --color-ink-850: #171510;
+  --color-ink-800: #1d1b16;
+  --color-ink-700: #2a2721;
+  --color-ink-600: #3a362e;
+  --color-ink-500: #57523f;
+
+  --color-cream: #f3e9c6;
+  --color-cream-soft: #dcd1ae;
+  --color-mute: #9b927b;
+  --color-faint: #6c6554;
+
+  --color-honey: #e9b44c;
+  --color-coral: #ef7060;
+  --color-sage: #93d3a2;
+  --color-sky: #86c5d8;
+
+  --radius-card: 1.125rem;
+
+  --shadow-pop: 0 18px 50px -12px rgb(0 0 0 / 0.7), 0 2px 0 0 rgb(255 255 255 / 0.04) inset;
+
+  --animate-fade-up: fade-up 0.55s cubic-bezier(0.2, 0.7, 0.2, 1) both;
+  --animate-fade-in: fade-in 0.35s ease both;
+  --animate-pop-in: pop-in 0.28s cubic-bezier(0.2, 0.9, 0.3, 1.2) both;
+  --animate-shake: shake 0.5s cubic-bezier(0.36, 0.07, 0.19, 0.97) both;
+  --animate-hop: hop 0.6s cubic-bezier(0.3, 0.7, 0.4, 1) both;
+  --animate-float: float 4.5s ease-in-out infinite;
+  --animate-blink: blink 4.8s ease-in-out infinite;
+  --animate-slide-in: slide-in 0.4s cubic-bezier(0.2, 0.7, 0.2, 1) both;
+
+  @keyframes fade-up {
+    from {
+      opacity: 0;
+      transform: translateY(14px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+  @keyframes fade-in {
+    from {
+      opacity: 0;
+    }
+    to {
+      opacity: 1;
+    }
+  }
+  @keyframes pop-in {
+    from {
+      opacity: 0;
+      transform: scale(0.94) translateY(8px);
+    }
+    to {
+      opacity: 1;
+      transform: scale(1) translateY(0);
+    }
+  }
+  @keyframes shake {
+    10%,
+    90% {
+      transform: translateX(-2px);
+    }
+    20%,
+    80% {
+      transform: translateX(4px);
+    }
+    30%,
+    50%,
+    70% {
+      transform: translateX(-7px);
+    }
+    40%,
+    60% {
+      transform: translateX(7px);
+    }
+  }
+  @keyframes hop {
+    0%,
+    100% {
+      transform: translateY(0);
+    }
+    35% {
+      transform: translateY(-9px);
+    }
+    65% {
+      transform: translateY(0);
+    }
+    80% {
+      transform: translateY(-3px);
+    }
+  }
+  @keyframes float {
+    0%,
+    100% {
+      transform: translateY(0);
+    }
+    50% {
+      transform: translateY(-6px);
+    }
+  }
+  @keyframes blink {
+    0%,
+    92%,
+    100% {
+      transform: scaleY(1);
+    }
+    95% {
+      transform: scaleY(0.08);
+    }
+  }
+  @keyframes slide-in {
+    from {
+      opacity: 0;
+      transform: translateX(-10px);
+    }
+    to {
+      opacity: 1;
+      transform: translateX(0);
+    }
+  }
+}
+
+@layer base {
+  :root {
+    color-scheme: dark;
+  }
+
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+
+  body {
+    background: var(--color-ink-950);
+    color: var(--color-cream-soft);
+    font-family: var(--font-sans);
+    font-feature-settings: "ss01", "cv11";
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  ::selection {
+    background: color-mix(in srgb, var(--color-honey) 35%, transparent);
+    color: var(--color-cream);
+  }
+
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--color-ink-600) transparent;
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--color-honey);
+    outline-offset: 2px;
+  }
+
+  input:focus-visible,
+  textarea:focus-visible,
+  select:focus-visible {
+    outline: none;
+  }
+
+  button:not(:disabled) {
+    cursor: pointer;
+  }
+
+  /* Hide the WebView's built-in reveal button; the app has its own. */
+  input::-ms-reveal,
+  input::-ms-clear {
+    display: none;
+  }
+}
+
+@layer utilities {
+  /* Soft surface used for cards and inputs. */
+  .surface {
+    background: var(--color-ink-850);
+    border: 1px solid var(--color-ink-700);
+  }
+
+  .hairline {
+    box-shadow: 0 1px 0 0 rgb(255 255 255 / 0.04) inset;
+  }
+
+  .dial-rings {
+    background-image:
+      radial-gradient(circle at 50% 50%, transparent 0 140px, rgb(243 233 198 / 0.05) 141px 142px, transparent 143px),
+      radial-gradient(circle at 50% 50%, transparent 0 210px, rgb(243 233 198 / 0.04) 211px 212px, transparent 213px),
+      radial-gradient(circle at 50% 50%, transparent 0 290px, rgb(243 233 198 / 0.03) 291px 292px, transparent 293px),
+      radial-gradient(circle at 50% 50%, transparent 0 380px, rgb(243 233 198 / 0.025) 381px 382px, transparent 383px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
