@@ -1,0 +1,16 @@
+# Dependencies
+node_modules/
+
+# Build outputs
+dist/
+src-tauri/target/
+
+# Vault data & backups (never commit secrets)
+*.vpass
+*.vpass.bak
+*.vpass.tmp
+.env
+.env.*
+
+# Tauri generated schemas
+src-tauri/gen/schemas/
