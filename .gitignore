@@ -14,3 +14,7 @@ src-tauri/target/
 
 # Tauri generated schemas
 src-tauri/gen/schemas/
+
+# Coverage output
+lcov.info
+*.profraw

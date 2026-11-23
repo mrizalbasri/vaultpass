@@ -1,0 +1,13 @@
+coverage:
+  status:
+    project:
+      default:
+        # Informational for now: only crypto/vault are unit tested,
+        # the Tauri command layer (lib.rs) is not.
+        informational: true
+    patch:
+      default:
+        informational: true
+
+comment:
+  layout: "condensed_header, diff, files"
