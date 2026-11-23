@@ -308,6 +308,42 @@ mod tests {
         assert!(result.is_err());
     }
 
+    // --- Compatibility guards -------------------------------------------------
+    // These pin the on-disk format. They were generated with argon2 0.5 and
+    // aes-gcm 0.10. If a dependency upgrade makes them fail, existing user
+    // vaults would no longer open, so do NOT just update the constants.
+    const COMPAT_PASSWORD: &str = "kompatibel-123";
+    const COMPAT_KEY_B64: &str = "kP8/pEx+Pet39QwIouvZbX53btwmydhK0p5wMS/ki0k=";
+    const COMPAT_ENVELOPE_JSON: &str = r#"{"magic":"VAULTPASS","version":1,"kdf":{"algorithm":"argon2id","memoryKib":8192,"iterations":2,"parallelism":1,"saltB64":"BQUFBQUFBQUFBQUFBQUFBQ=="},"cipher":"aes-256-gcm","nonceB64":"ZEKVNcrRILrrmf7m","ciphertextB64":"gkAHE2FhO5/iS4KrYs4d2TkL1elo34UjOMvQsKBIS8RkaxCkz+/WL2QHC1TsajM/VFP9sbO7cC83oy+EsPzA22WN842e+MpMoxzmUS67dbux3jspFrIFgjazRhPLRTcv8tweXe03bpwVfGO8XREw9K2b5kcZ2Oxf6MiP5KCdF83NcQu3Lrr4VofBF9sSzNcj8Em9pJosg0SJ7Feth/WiP15c+I3PYBiOjfIM/5uW735uOlstp6YWVUmEOO5BEXFUmsCijKNoYkmEemPZ4B4qnhn6oeBWM4WRwz6WFRm9Opuzux9OTTEfJFiVXPwJSeqJ4tR5IEcgnJUB8XcHgaDIu4r+Z0cvBO3YI+p0T4r9F79B2z5V9hLGxG+aQmw3up0bjvnOcSZfiP0QIMpD1vzXeNZ4aMVu9ZN6Eo40L2Ri3JqiMo4j0Nz6hdofG2UjhTJS5Whh4yykUx9RaRqv4EYr/sid67hct7TQjG2zP5Xr/mqG22N24O/5"}"#;
+
+    #[test]
+    fn argon2id_derivation_matches_known_answer() {
+        let envelope: VaultEnvelope = serde_json::from_str(COMPAT_ENVELOPE_JSON).unwrap();
+        let key = derive_key(COMPAT_PASSWORD, &envelope.kdf).unwrap();
+        assert_eq!(B64.encode(*key), COMPAT_KEY_B64);
+    }
+
+    #[test]
+    fn vault_written_by_previous_versions_still_decrypts() {
+        let envelope: VaultEnvelope = serde_json::from_str(COMPAT_ENVELOPE_JSON).unwrap();
+        let (_key, plaintext) = decrypt_envelope(&envelope, COMPAT_PASSWORD).unwrap();
+        let text = std::str::from_utf8(&plaintext).unwrap();
+        assert!(text.contains("\"title\":\"OpenAI\""));
+        assert!(text.contains("\"password\":\"sk-demo-0000\""));
+    }
+
+    #[test]
+    fn fixture_rejects_wrong_password_and_tampered_ciphertext() {
+        let envelope: VaultEnvelope = serde_json::from_str(COMPAT_ENVELOPE_JSON).unwrap();
+        assert!(decrypt_envelope(&envelope, "salah-123").is_err());
+
+        let mut tampered = envelope.clone();
+        let mut bytes = B64.decode(&tampered.ciphertext_b64).unwrap();
+        bytes[0] ^= 0x01;
+        tampered.ciphertext_b64 = B64.encode(bytes);
+        assert!(decrypt_envelope(&tampered, COMPAT_PASSWORD).is_err());
+    }
+
     #[test]
     fn generator_respects_length_and_excludes_ambiguous() {
         let opts = PasswordGenOptions {
