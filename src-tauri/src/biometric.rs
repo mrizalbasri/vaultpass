@@ -183,9 +183,7 @@ fn prompt_native_consent_dialog(prompt_message: &str) -> Result<(), String> {
     let mut text_utf16: Vec<u16> = text.encode_utf16().collect();
     text_utf16.push(0);
 
-    let mut caption_utf16: Vec<u16> = "VaultPass — Konfirmasi Keamanan"
-        .encode_utf16()
-        .collect();
+    let mut caption_utf16: Vec<u16> = "VaultPass — Konfirmasi Keamanan".encode_utf16().collect();
     caption_utf16.push(0);
 
     let response = unsafe {

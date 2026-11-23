@@ -147,7 +147,9 @@ fn run_cli() -> Result<(), String> {
         }
         "get" => {
             if args.len() < 2 {
-                return Err("Masukkan nama akun/key atau ID: vaultpass-cli get <nama-akun>".to_string());
+                return Err(
+                    "Masukkan nama akun/key atau ID: vaultpass-cli get <nama-akun>".to_string(),
+                );
             }
             if !bio_enabled {
                 return Err(
@@ -193,7 +195,9 @@ fn run_cli() -> Result<(), String> {
                         .iter()
                         .find(|item| item.title.to_lowercase().contains(&target_lower))
                 })
-                .ok_or_else(|| format!("Akun atau Key '{target}' tidak ditemukan di dalam vault."))?;
+                .ok_or_else(|| {
+                    format!("Akun atau Key '{target}' tidak ditemukan di dalam vault.")
+                })?;
 
             match field {
                 "password" | "key" => println!("{}", entry.password),
@@ -280,8 +284,8 @@ fn run_cli() -> Result<(), String> {
                 })
                 .ok_or_else(|| format!("Key '{target}' tidak ditemukan di dalam vault."))?;
 
-            let env_var = custom_env
-                .unwrap_or_else(|| default_env_name(&entry.title, &entry.env_var_name));
+            let env_var =
+                custom_env.unwrap_or_else(|| default_env_name(&entry.title, &entry.env_var_name));
 
             let status = Command::new(&cmd_parts[0])
                 .args(&cmd_parts[1..])

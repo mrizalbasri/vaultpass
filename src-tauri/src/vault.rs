@@ -113,8 +113,7 @@ pub fn write_envelope_atomic(path: &Path, envelope: &VaultEnvelope) -> Result<()
             .map_err(|e| format!("Gagal membuat salinan backup sebelum menyimpan: {e}"))?;
     }
 
-    fs::rename(&tmp_path, path)
-        .map_err(|e| format!("Gagal memindahkan file vault baru: {e}"))?;
+    fs::rename(&tmp_path, path).map_err(|e| format!("Gagal memindahkan file vault baru: {e}"))?;
 
     Ok(())
 }
@@ -146,10 +145,7 @@ pub fn open_vault_with_password(
     })
 }
 
-pub fn open_vault_with_key(
-    path: &Path,
-    key: Zeroizing<[u8; 32]>,
-) -> Result<UnlockedVault, String> {
+pub fn open_vault_with_key(path: &Path, key: Zeroizing<[u8; 32]>) -> Result<UnlockedVault, String> {
     let envelope = read_envelope(path)?;
     let plaintext = decrypt_envelope_with_key(&envelope, &key)?;
     let payload: VaultPayload = serde_json::from_slice(&plaintext)
@@ -216,10 +212,7 @@ mod tests {
         assert_eq!(reopened.payload.entries.len(), 1);
         assert_eq!(reopened.payload.entries[0].title, "OpenAI API");
         assert_eq!(reopened.payload.entries[0].env_var_name, "OPENAI_API_KEY");
-        assert_eq!(
-            reopened.password_hint.as_deref(),
-            Some("Kucing pertama")
-        );
+        assert_eq!(reopened.password_hint.as_deref(), Some("Kucing pertama"));
 
         let _ = fs::remove_dir_all(&dir);
     }

@@ -301,11 +301,9 @@ fn enable_biometric_unlock(state: State<'_, AppState>) -> Result<VaultStatus, St
             .unlocked
             .lock()
             .map_err(|_| "State vault terkunci internal.".to_string())?;
-        let vault = guard
-            .as_ref()
-            .ok_or_else(|| {
-                "Buka vault terlebih dahulu sebelum mengaktifkan Windows Hello.".to_string()
-            })?;
+        let vault = guard.as_ref().ok_or_else(|| {
+            "Buka vault terlebih dahulu sebelum mengaktifkan Windows Hello.".to_string()
+        })?;
         vault.key.clone()
     };
 
@@ -354,10 +352,7 @@ fn list_entries(state: State<'_, AppState>) -> Result<Vec<VaultEntry>, String> {
 }
 
 #[tauri::command]
-fn upsert_entry(
-    entry: VaultEntryInput,
-    state: State<'_, AppState>,
-) -> Result<VaultEntry, String> {
+fn upsert_entry(entry: VaultEntryInput, state: State<'_, AppState>) -> Result<VaultEntry, String> {
     if entry.title.trim().is_empty() {
         return Err("Nama layanan/akun wajib diisi.".to_string());
     }
