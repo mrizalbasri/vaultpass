@@ -177,15 +177,20 @@ pub fn decrypt_envelope_with_key(
                 aad: &aad,
             },
         )
-        .map_err(|_| "Master password salah atau file vault telah rusak/dimodifikasi.".to_string())?;
+        .map_err(|_| {
+            "Master password salah atau file vault telah rusak/dimodifikasi.".to_string()
+        })?;
 
     Ok(Zeroizing::new(plaintext))
 }
 
+/// Derived key plus the decrypted vault bytes, both wiped from memory on drop.
+pub type DecryptedVault = (Zeroizing<[u8; 32]>, Zeroizing<Vec<u8>>);
+
 pub fn decrypt_envelope(
     envelope: &VaultEnvelope,
     master_password: &str,
-) -> Result<(Zeroizing<[u8; 32]>, Zeroizing<Vec<u8>>), String> {
+) -> Result<DecryptedVault, String> {
     if envelope.magic != VAULT_MAGIC || envelope.version != VAULT_VERSION {
         return Err("Format file vault tidak dikenali atau versi tidak didukung.".to_string());
     }
@@ -224,7 +229,9 @@ pub fn generate_password(options: &PasswordGenOptions) -> Result<String, String>
         return Err("Pilih minimal satu jenis karakter.".to_string());
     }
     if options.length < pools.len() {
-        return Err("Panjang password terlalu pendek untuk kombinasi karakter yang dipilih.".to_string());
+        return Err(
+            "Panjang password terlalu pendek untuk kombinasi karakter yang dipilih.".to_string(),
+        );
     }
 
     let combined: Vec<char> = pools.iter().flatten().copied().collect();
