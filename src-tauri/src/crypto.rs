@@ -4,7 +4,7 @@ use aes_gcm::{
 };
 use argon2::{Algorithm, Argon2, Params, Version};
 use base64::{engine::general_purpose::STANDARD as B64, Engine};
-use rand::{rngs::OsRng, Rng, RngCore};
+use rand::{rngs::OsRng, Rng, RngCore, TryRngCore};
 use serde::{Deserialize, Serialize};
 use zeroize::Zeroizing;
 
@@ -27,7 +27,7 @@ pub struct KdfParams {
 impl KdfParams {
     pub fn new_random() -> Self {
         let mut salt = [0u8; 16];
-        OsRng.fill_bytes(&mut salt);
+        OsRng.unwrap_err().fill_bytes(&mut salt);
         Self {
             algorithm: "argon2id".to_string(),
             memory_kib: DEFAULT_MEMORY_KIB,
@@ -111,7 +111,7 @@ pub fn encrypt_with_key(
         .map_err(|e| format!("Gagal menginisialisasi cipher AES-256-GCM: {e}"))?;
 
     let mut nonce_bytes = [0u8; 12];
-    OsRng.fill_bytes(&mut nonce_bytes);
+    OsRng.unwrap_err().fill_bytes(&mut nonce_bytes);
     let nonce = Nonce::from(nonce_bytes);
     let aad = build_aad(VAULT_MAGIC, VAULT_VERSION, &kdf, &cipher_name);
 
@@ -237,19 +237,21 @@ pub fn generate_password(options: &PasswordGenOptions) -> Result<String, String>
 
     let combined: Vec<char> = pools.iter().flatten().copied().collect();
     let mut chars: Vec<char> = Vec::with_capacity(options.length);
+    // Draw directly from the OS CSPRNG; unwrap_err panics only if the OS RNG fails.
+    let mut rng = OsRng.unwrap_err();
 
     for pool in &pools {
-        let idx = OsRng.gen_range(0..pool.len());
+        let idx = rng.random_range(0..pool.len());
         chars.push(pool[idx]);
     }
 
     while chars.len() < options.length {
-        let idx = OsRng.gen_range(0..combined.len());
+        let idx = rng.random_range(0..combined.len());
         chars.push(combined[idx]);
     }
 
     for i in (1..chars.len()).rev() {
-        let j = OsRng.gen_range(0..=i);
+        let j = rng.random_range(0..=i);
         chars.swap(i, j);
     }
 
