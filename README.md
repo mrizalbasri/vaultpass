@@ -94,15 +94,27 @@ Panel detail di aplikasi untuk item bertipe API Key sudah menyiapkan perintah in
 
 ## Memulai
 
-**Prasyarat:** Windows 10/11 dengan WebView2, Node.js 22+, Rust stable, dan [prasyarat Tauri v2](https://v2.tauri.app/start/prerequisites/) untuk Windows.
+> Aplikasi memakai Windows DPAPI, Windows Hello, dan Win32 Clipboard, jadi saat ini **khusus Windows 10/11 (64-bit)**.
 
-> Backend memakai Windows DPAPI dan Windows Hello, jadi aplikasi saat ini **hanya berjalan di Windows**.
+### 1. Install Cepat lewat PowerShell (Aplikasi Desktop + `vaultpass-cli`)
+
+Perintah ini mengunduh rilis terbaru dari [GitHub Releases](https://github.com/mrizalbasri/vaultpass/releases), memverifikasi checksum `SHA-256`, memasang VaultPass, dan otomatis mendaftarkan `vaultpass-cli` ke `PATH`:
+
+```powershell
+irm https://raw.githubusercontent.com/mrizalbasri/vaultpass/main/install.ps1 | iex
+```
+
+Atau unduh manual **`VaultPass_*_x64-setup.exe`** (maupun versi `*_portable.zip`) langsung dari halaman [Releases](https://github.com/mrizalbasri/vaultpass/releases).
+
+### 2. Menjalankan dari Kode Sumber (Developer)
+
+**Prasyarat:** Windows 10/11 dengan WebView2, Node.js 22+, Rust stable, dan [prasyarat Tauri v2](https://v2.tauri.app/start/prerequisites/) untuk Windows.
 
 ```bash
 git clone https://github.com/mrizalbasri/vaultpass.git
 cd vaultpass
 npm install
-npm run tauri dev
+npm run tauri:dev
 ```
 
 Membangun installer (otomatis ikut memaketkan `vaultpass-cli.exe` ke dalam installer `.msi` & `-setup.exe`):
