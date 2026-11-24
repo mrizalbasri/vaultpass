@@ -112,12 +112,12 @@ pub fn encrypt_with_key(
 
     let mut nonce_bytes = [0u8; 12];
     OsRng.fill_bytes(&mut nonce_bytes);
-    let nonce = Nonce::from_slice(&nonce_bytes);
+    let nonce = Nonce::from(nonce_bytes);
     let aad = build_aad(VAULT_MAGIC, VAULT_VERSION, &kdf, &cipher_name);
 
     let ciphertext = cipher
         .encrypt(
-            nonce,
+            &nonce,
             Payload {
                 msg: plaintext,
                 aad: &aad,
@@ -156,7 +156,8 @@ pub fn decrypt_envelope_with_key(
     if nonce_bytes.len() != 12 {
         return Err("Panjang nonce tidak valid.".to_string());
     }
-    let nonce = Nonce::from_slice(&nonce_bytes);
+    let nonce = Nonce::try_from(nonce_bytes.as_slice())
+        .map_err(|_| "Panjang nonce tidak valid.".to_string())?;
 
     let ciphertext = B64
         .decode(&envelope.ciphertext_b64)
@@ -171,7 +172,7 @@ pub fn decrypt_envelope_with_key(
 
     let plaintext = cipher
         .decrypt(
-            nonce,
+            &nonce,
             Payload {
                 msg: &ciphertext,
                 aad: &aad,
