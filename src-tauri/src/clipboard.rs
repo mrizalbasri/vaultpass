@@ -165,3 +165,83 @@ pub fn clear_clipboard_if_matches(expected: &str) {
         }
     }
 }
+
+#[cfg(test)]
+pub(crate) static CLIPBOARD_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+#[cfg(test)]
+fn read_clipboard_utf16_for_test() -> Option<String> {
+    let _guard = ClipboardGuard::open().ok()?;
+    let handle = unsafe { GetClipboardData(CF_UNICODETEXT) };
+    if handle.is_null() {
+        return None;
+    }
+    unsafe {
+        let byte_cap = GlobalSize(handle);
+        let ptr = GlobalLock(handle) as *const u16;
+        if ptr.is_null() || byte_cap < 2 {
+            return None;
+        }
+        let max_units = byte_cap / 2;
+        let raw = std::slice::from_raw_parts(ptr, max_units);
+        let nul_pos = raw.iter().position(|&c| c == 0).unwrap_or(max_units);
+        let decoded = String::from_utf16_lossy(&raw[..nul_pos]);
+        let _ = GlobalUnlock(handle);
+        Some(decoded)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn clipboard_set_and_conditional_clear_roundtrip() {
+        let _serial = CLIPBOARD_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+
+        set_clipboard_text("vaultpass-public-test", false).unwrap();
+        assert_eq!(
+            read_clipboard_utf16_for_test().as_deref(),
+            Some("vaultpass-public-test")
+        );
+
+        // Non-matching expectation must leave current clipboard intact.
+        clear_clipboard_if_matches("different-text");
+        assert_eq!(
+            read_clipboard_utf16_for_test().as_deref(),
+            Some("vaultpass-public-test")
+        );
+
+        clear_clipboard_if_matches("vaultpass-public-test");
+        assert_eq!(read_clipboard_utf16_for_test(), None);
+    }
+
+    #[test]
+    fn sensitive_clipboard_excludes_history_and_clears() {
+        let _serial = CLIPBOARD_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+
+        let fmt_history = register_format("CanIncludeInClipboardHistory");
+        let fmt_cloud = register_format("CanUploadToCloudClipboard");
+        assert!(fmt_history != 0);
+        assert!(fmt_cloud != 0);
+
+        set_clipboard_text("vaultpass-sensitive-secret", true).unwrap();
+        assert_eq!(
+            read_clipboard_utf16_for_test().as_deref(),
+            Some("vaultpass-sensitive-secret")
+        );
+
+        {
+            let _guard = ClipboardGuard::open().unwrap();
+            assert!(!unsafe { GetClipboardData(fmt_history) }.is_null());
+            assert!(!unsafe { GetClipboardData(fmt_cloud) }.is_null());
+        }
+
+        clear_clipboard_if_matches("vaultpass-sensitive-secret");
+        assert_eq!(read_clipboard_utf16_for_test(), None);
+    }
+}

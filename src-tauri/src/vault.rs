@@ -546,4 +546,48 @@ mod tests {
         assert_eq!(summaries[2].reused_count, 1);
         assert_eq!(summaries[2].strength_score, 4);
     }
+
+    #[test]
+    fn strength_hint_key_open_and_sanitizer_edge_cases() {
+        assert_eq!(evaluate_password_strength_score(""), 0);
+        assert_eq!(evaluate_password_strength_score("Ab1!"), 1);
+        assert_eq!(evaluate_password_strength_score("aaaaaaaaaaaa"), 1);
+        assert_eq!(evaluate_password_strength_score("Abcd1234"), 2);
+        assert_eq!(evaluate_password_strength_score("Abcd12345678"), 3);
+
+        assert_eq!(normalize_hint(Some("   \n\t  ".to_string())), None);
+        let long_hint = format!("petunjuk\n{}", "x".repeat(250));
+        let normalized = normalize_hint(Some(long_hint)).unwrap();
+        assert!(!normalized.contains('\n'));
+        assert_eq!(normalized.chars().count(), MAX_HINT_CHARS);
+
+        assert!(validate_env_var_name(&"A".repeat(MAX_ENV_VAR_LEN + 1)).is_err());
+        assert_eq!(sanitize_imported_env_var_name("valid_key"), "VALID_KEY");
+        assert_eq!(sanitize_imported_env_var_name("PATH"), "");
+
+        let dir = std::env::temp_dir().join(format!("vaultpass-keyopen-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&dir).unwrap();
+        let vault_path = dir.join("vault.vpass");
+
+        let kdf = KdfParams {
+            algorithm: "argon2id".to_string(),
+            memory_kib: 8192,
+            iterations: 1,
+            parallelism: 1,
+            salt_b64: B64.encode([31u8; 16]),
+        };
+        let key = derive_key("key-open-pw", &kdf).unwrap();
+        let unlocked = UnlockedVault {
+            key: key.clone(),
+            kdf,
+            payload: VaultPayload::default(),
+            password_hint: Some("ingat ini".to_string()),
+        };
+        save_unlocked_vault(&vault_path, &unlocked).unwrap();
+
+        let reopened_by_key = open_vault_with_key(&vault_path, key).unwrap();
+        assert_eq!(reopened_by_key.password_hint.as_deref(), Some("ingat ini"));
+
+        let _ = fs::remove_dir_all(&dir);
+    }
 }

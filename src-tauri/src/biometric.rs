@@ -264,21 +264,67 @@ fn delete_credential_entropy(target_name: &str) {
 
 /// Rotates a fresh 32-byte random entropy in Windows Credential Manager and wraps `key`
 /// with Windows DPAPI bound to that entropy.
-pub fn dpapi_protect_key(key: &[u8; 32]) -> Result<String, String> {
+pub fn dpapi_protect_key_for_target(target_name: &str, key: &[u8; 32]) -> Result<String, String> {
     let mut entropy = Zeroizing::new([0u8; 32]);
     OsRng.unwrap_err().fill_bytes(&mut *entropy);
     let wrapped = dpapi_protect_key_with_entropy(key, &*entropy)?;
-    write_credential_entropy(CRED_TARGET_NAME, &entropy)?;
+    write_credential_entropy(target_name, &entropy)?;
     Ok(wrapped)
 }
 
-pub fn dpapi_unprotect_key(encoded_b64: &str) -> Result<Zeroizing<[u8; 32]>, String> {
-    let entropy = read_credential_entropy(CRED_TARGET_NAME)?;
+pub fn dpapi_protect_key(key: &[u8; 32]) -> Result<String, String> {
+    dpapi_protect_key_for_target(CRED_TARGET_NAME, key)
+}
+
+pub fn dpapi_unprotect_key_for_target(
+    target_name: &str,
+    encoded_b64: &str,
+) -> Result<Zeroizing<[u8; 32]>, String> {
+    let entropy = read_credential_entropy(target_name)?;
     dpapi_unprotect_key_with_entropy(encoded_b64, &*entropy)
 }
 
+pub fn dpapi_unprotect_key(encoded_b64: &str) -> Result<Zeroizing<[u8; 32]>, String> {
+    dpapi_unprotect_key_for_target(CRED_TARGET_NAME, encoded_b64)
+}
+
+pub fn clear_biometric_secret_store_for_target(target_name: &str) {
+    delete_credential_entropy(target_name);
+}
+
 pub fn clear_biometric_secret_store() {
-    delete_credential_entropy(CRED_TARGET_NAME);
+    clear_biometric_secret_store_for_target(CRED_TARGET_NAME);
+}
+
+pub fn default_biometric_cred_target() -> &'static str {
+    CRED_TARGET_NAME
+}
+
+fn map_verification_result(
+    hello_result: Result<UserConsentVerificationResult, String>,
+) -> Result<(), String> {
+    match hello_result {
+        Ok(UserConsentVerificationResult::Verified) => Ok(()),
+        Ok(UserConsentVerificationResult::Canceled) => {
+            Err("Verifikasi Windows Hello dibatalkan.".to_string())
+        }
+        Ok(UserConsentVerificationResult::RetriesExhausted) => {
+            Err("Percobaan verifikasi Windows Hello habis.".to_string())
+        }
+        Ok(UserConsentVerificationResult::DeviceNotPresent)
+        | Ok(UserConsentVerificationResult::NotConfiguredForUser) => Err(
+            "Windows Hello belum dikonfigurasi untuk akun Windows ini. Aktifkan PIN atau Sidik Jari di Pengaturan Windows."
+                .to_string(),
+        ),
+        Ok(UserConsentVerificationResult::DisabledByPolicy) => {
+            Err("Windows Hello dinonaktifkan oleh kebijakan sistem.".to_string())
+        }
+        Ok(UserConsentVerificationResult::DeviceBusy) => {
+            Err("Perangkat Windows Hello sedang sibuk. Coba lagi sesaat lagi.".to_string())
+        }
+        Ok(_) => Err("Verifikasi Windows Hello ditolak.".to_string()),
+        Err(err) => Err(err),
+    }
 }
 
 pub fn is_windows_hello_available() -> bool {
@@ -339,28 +385,7 @@ pub fn request_windows_hello_verification(
         .join()
         .map_err(|_| "Thread verifikasi Windows Hello gagal dijalankan.".to_string())?;
 
-    match hello_result {
-        Ok(UserConsentVerificationResult::Verified) => Ok(()),
-        Ok(UserConsentVerificationResult::Canceled) => {
-            Err("Verifikasi Windows Hello dibatalkan.".to_string())
-        }
-        Ok(UserConsentVerificationResult::RetriesExhausted) => {
-            Err("Percobaan verifikasi Windows Hello habis.".to_string())
-        }
-        Ok(UserConsentVerificationResult::DeviceNotPresent)
-        | Ok(UserConsentVerificationResult::NotConfiguredForUser) => Err(
-            "Windows Hello belum dikonfigurasi untuk akun Windows ini. Aktifkan PIN atau Sidik Jari di Pengaturan Windows."
-                .to_string(),
-        ),
-        Ok(UserConsentVerificationResult::DisabledByPolicy) => {
-            Err("Windows Hello dinonaktifkan oleh kebijakan sistem.".to_string())
-        }
-        Ok(UserConsentVerificationResult::DeviceBusy) => {
-            Err("Perangkat Windows Hello sedang sibuk. Coba lagi sesaat lagi.".to_string())
-        }
-        Ok(_) => Err("Verifikasi Windows Hello ditolak.".to_string()),
-        Err(err) => Err(err),
-    }
+    map_verification_result(hello_result)
 }
 
 #[cfg(test)]
@@ -405,5 +430,49 @@ mod tests {
         let bounded = sanitize_prompt_label(&huge);
         assert!(bounded.len() <= 75);
         assert!(bounded.ends_with("..."));
+        assert_eq!(sanitize_prompt_label("   \n\t  "), "(tanpa nama)");
+    }
+
+    #[test]
+    fn target_scoped_biometric_store_and_error_paths() {
+        let target = format!("VaultPass:TestTargetStore:{}", uuid::Uuid::new_v4());
+        let key = [0x33u8; 32];
+
+        let wrapped = dpapi_protect_key_for_target(&target, &key).unwrap();
+        let unwrapped = dpapi_unprotect_key_for_target(&target, &wrapped).unwrap();
+        assert_eq!(&*unwrapped, &key);
+
+        assert!(dpapi_unprotect_key_with_entropy("%%%not-base64%%%", &[1u8; 32]).is_err());
+
+        clear_biometric_secret_store_for_target(&target);
+        assert!(dpapi_unprotect_key_for_target(&target, &wrapped).is_err());
+        assert_eq!(default_biometric_cred_target(), CRED_TARGET_NAME);
+    }
+
+    #[test]
+    fn map_verification_result_enforces_strict_verified_only() {
+        assert!(map_verification_result(Ok(UserConsentVerificationResult::Verified)).is_ok());
+        assert!(map_verification_result(Ok(UserConsentVerificationResult::Canceled)).is_err());
+        assert!(
+            map_verification_result(Ok(UserConsentVerificationResult::RetriesExhausted)).is_err()
+        );
+        assert!(
+            map_verification_result(Ok(UserConsentVerificationResult::DeviceNotPresent)).is_err()
+        );
+        assert!(
+            map_verification_result(Ok(UserConsentVerificationResult::NotConfiguredForUser))
+                .is_err()
+        );
+        assert!(
+            map_verification_result(Ok(UserConsentVerificationResult::DisabledByPolicy)).is_err()
+        );
+        assert!(map_verification_result(Ok(UserConsentVerificationResult::DeviceBusy)).is_err());
+        assert!(map_verification_result(Ok(UserConsentVerificationResult(999))).is_err());
+        assert!(map_verification_result(Err("boom".to_string())).is_err());
+
+        let _ = foreground_window_hwnd();
+        if !is_windows_hello_available() {
+            assert!(request_windows_hello_verification("Uji", None).is_err());
+        }
     }
 }

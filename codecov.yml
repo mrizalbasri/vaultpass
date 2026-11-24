@@ -2,8 +2,7 @@ coverage:
   status:
     project:
       default:
-        # Informational for now: only crypto/vault are unit tested,
-        # the Tauri command layer (lib.rs) is not.
+        # Informational while GUI window/dialog wrappers remain thin Tauri entrypoints.
         informational: true
     patch:
       default:

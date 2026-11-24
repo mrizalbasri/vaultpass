@@ -48,6 +48,8 @@ jobs:
       - uses: taiki-e/install-action@cargo-llvm-cov
       - name: Test with coverage
         run: cargo llvm-cov --lib --lcov --output-path lcov.info
+      - name: Test CLI binary units
+        run: cargo test --bins
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v7
         with:
