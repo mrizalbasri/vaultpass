@@ -28,33 +28,34 @@ Ada satu fitur yang jarang ditemui di password manager lain: **AI Agent bisa mem
 ## Fitur
 
 **Keamanan**
-- Enkripsi **AES-256-GCM** dengan kunci dari **Argon2id**
-- Kunci dan data dihapus dari memori saat vault dikunci (`zeroize`)
-- Penyimpanan atomik dengan salinan `.bak` otomatis, jadi file tidak rusak saat penyimpanan terputus
-- Buka vault dengan **Windows Hello** (sidik jari atau PIN), kuncinya dilindungi Windows DPAPI
+- Enkripsi **AES-256-GCM** dengan kunci dari **Argon2id** (dengan batas aman parameter KDF terhadap file eksternal)
+- Kunci dan payload dihapus dari memori Rust saat vault dikunci (`zeroize`), dan daftar item di UI tidak menahan seluruh password/secret di memori JavaScript WebView
+- Penyimpanan atomik dengan salinan `.bak` otomatis (ikut dienkripsi ulang dengan nonce baru saat ganti master password)
+- Clipboard dibersihkan otomatis dan ditandai agar tidak terekam di **Windows Clipboard History (`Win+V`)** maupun Cloud Clipboard
+- Buka vault dengan **Windows Hello** (sidik jari, wajah, atau PIN) tanpa fallback dialog biasa; kunci dibungkus Windows DPAPI + entropi acak di Windows Credential Manager
 
 **Pemakaian harian**
 - Akun login dan **API key** dalam satu tempat, dengan kategori, favorit, dan pencarian cepat (`Ctrl+K`)
 - Generator password memakai CSPRNG milik sistem operasi
 - Indikator kekuatan password, dan penanda password yang lemah atau dipakai ulang
 - **Auto-lock** saat idle dengan hitung mundur dan peringatan 30 detik sebelum terkunci
-- Clipboard dibersihkan otomatis setelah menyalin secret
-- Ekspor dan impor backup terenkripsi (`.vpass`), serta lokasi file vault yang bisa kamu pilih sendiri
+- Ekspor dan impor backup terenkripsi (`.vpass`), serta lokasi file vault yang bisa kamu pilih sendiri (default di `%LOCALAPPDATA%\com.rizal.vaultpass\vault.vpass`)
 - Pengingat master password (opsional) di layar login
 
 **Untuk AI Agent**
-- CLI `vaultpass-cli` untuk membaca atau menyuntikkan secret ke environment variable, dijaga Windows Hello
+- CLI `vaultpass-cli` khusus kategori **API Key** (akun `Login`/`Finance` tetap terisolasi dari CLI) dengan pencocokan nama/ID persis dan persetujuan Windows Hello
 
 ## Cara kerja keamanan
 
 | Aspek | Detail |
 |---|---|
-| Derivasi kunci | Argon2id, `m = 64 MiB`, `t = 3`, `p = 4`, salt acak 16 byte |
+| Derivasi kunci | Argon2id, `m = 64 MiB` (batas validasi `8 MiB – 1 GiB`), `t = 3`, `p = 4`, salt acak 16 byte |
 | Enkripsi | AES-256-GCM, nonce acak 12 byte yang baru di setiap penyimpanan |
 | Integritas | Header file (versi, parameter KDF, salt, cipher) ikut diautentikasi sebagai AAD, jadi mengubah header membuat dekripsi gagal |
-| Memori | `zeroize` menghapus kunci dan payload saat vault dikunci |
-| Penyimpanan | Tulis ke `.vpass.tmp`, sinkronkan ke disk, salin yang lama ke `.vpass.bak`, lalu ganti `vault.vpass` |
-| Biometrik | Kunci vault dibungkus Windows DPAPI dan hanya dibuka setelah verifikasi Windows Hello |
+| Memori & IPC | `zeroize` menghapus kunci dan payload di Rust saat vault dikunci; penyalinan secret dilakukan langsung dari Rust ke clipboard tanpa melewati JavaScript |
+| Clipboard | Menyertakan flag `ExcludeClipboardContentFromMonitorProcessing`, `CanIncludeInClipboardHistory=0`, dan `CanUploadToCloudClipboard=0` |
+| Penyimpanan | Tulis ke `.vpass.tmp`, sinkronkan ke disk, salin ke `.vpass.bak`, lalu ganti `vault.vpass` (saat rotasi master password, `.vpass.bak` juga langsung dienkripsi ulang) |
+| Biometrik | Verifikasi paksa via Windows Hello (`IUserConsentVerifierInterop`), kunci dibungkus Windows DPAPI + entropi 32 byte di Windows Credential Manager |
 
 ```mermaid
 flowchart LR
@@ -68,25 +69,25 @@ flowchart LR
 ```
 
 **Yang tidak dilindungi:**
-- Malware atau pengintai di komputer yang sedang dalam keadaan terbuka
+- Malware atau eksekusi kode tak tepercaya di akun pengguna Windows yang sama. Saat fitur Windows Hello diaktifkan pada aplikasi desktop *unpackaged*, kunci dibungkus menggunakan DPAPI tingkat akun pengguna Windows — fitur `vaultpass-cli` dirancang sebagai *consent guardrail* agar secret tidak bocor ke log chat/riwayat terminal, bukan isolasi terhadap proses lokal berbahaya yang berjalan sebagai akun Windows milikmu sendiri.
 - Master password yang hilang. Tidak ada cara memulihkannya, karena password itu tidak disimpan di mana pun
 
 Untuk melaporkan kerentanan, lihat [SECURITY.md](SECURITY.md).
 
 ## Akses AI Agent lewat CLI
 
-`vaultpass-cli` memungkinkan AI Agent memakai key dari vault dengan persetujuanmu. Fitur ini perlu diaktifkan dulu di **Pengaturan → Windows Hello**.
+`vaultpass-cli` memungkinkan AI Agent memakai item berkategori **API Key** dari vault dengan persetujuanmu (item `Login`, `Finance`, dan kategori lain tidak dapat diakses lewat CLI). Fitur ini perlu diaktifkan dulu di **Pengaturan & Keamanan → Windows Hello**.
 
 ```powershell
-# Daftar item (opsional: cari dengan kata kunci)
+# Daftar item kategori API Key (opsional: cari dengan kata kunci)
 vaultpass-cli list --query openai
 
-# Baca satu nilai: password | key | username | url | env | notes | json
-vaultpass-cli get "OpenAI" --field key
-
 # Jalankan perintah dengan key disuntikkan ke environment variable,
-# tanpa key tampil di log atau chat
-vaultpass-cli run --key "OpenAI" --env OPENAI_API_KEY -- python test_api.py
+# tanpa key tampil di log atau chat (vault dihapus dari memori sebelum proses anak jalan)
+vaultpass-cli run --key 'OpenAI' --env 'OPENAI_API_KEY' -- python test_api.py
+
+# Baca satu nilai secara eksplisit: key | password | username | url | env | notes | json
+vaultpass-cli get 'OpenAI' --field key
 ```
 
 Panel detail di aplikasi untuk item bertipe API Key sudah menyiapkan perintah ini dan bisa disalin dengan satu klik.
@@ -104,10 +105,10 @@ npm install
 npm run tauri dev
 ```
 
-Membangun installer:
+Membangun installer (otomatis ikut memaketkan `vaultpass-cli.exe` ke dalam installer `.msi` & `-setup.exe`):
 
 ```bash
-npm run tauri build
+npm run tauri:build
 ```
 
 ## Pengujian
@@ -118,7 +119,7 @@ npm run build                      # typecheck + build frontend
 cd src-tauri
 cargo fmt --check                  # format
 cargo clippy --all-targets -- -D warnings
-cargo test --lib                   # enkripsi, penyimpanan, dan generator password
+cargo test                         # enkripsi, penyimpanan, clipboard, biometrik, dan CLI
 ```
 
 CI menjalankan semua pemeriksaan di atas pada setiap pull request.
@@ -135,11 +136,13 @@ vaultpass/
 ├── src-tauri/                # Backend Rust (Tauri 2)
 │   ├── src/
 │   │   ├── crypto.rs         # Argon2id, AES-256-GCM, generator password
-│   │   ├── vault.rs          # format vault, penyimpanan atomik
-│   │   ├── biometric.rs      # Windows Hello + DPAPI
+│   │   ├── vault.rs          # format vault, validasi env, penyimpanan atomik
+│   │   ├── biometric.rs      # Windows Hello + DPAPI + Credential Manager
+│   │   ├── clipboard.rs      # clipboard Win32 + eksklusi Clipboard History
 │   │   ├── lib.rs            # command Tauri
 │   │   └── bin/vaultpass_cli.rs
 │   └── icons/source/         # sumber logo (SVG)
+├── scripts/                  # skrip build sidecar CLI & render ikon
 └── .github/                  # CI, Dependabot, template issue dan PR
 ```
 
