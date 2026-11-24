@@ -36,11 +36,33 @@ import {
   type VaultEntryInput,
   type VaultStatus,
 } from "./types";
-import { evaluatePasswordStrength } from "./utils/passwordStrength";
+import { strengthFromScore } from "./utils/passwordStrength";
 
 type SidebarFilter = "all" | "favorites" | "weak" | EntryCategory;
 
-const CLI_PATH = "D:\\vaultpass\\src-tauri\\target\\release\\vaultpass-cli.exe";
+const ENV_VAR_PATTERN = /^[A-Z_][A-Z0-9_]*$/;
+
+function psSingleQuote(value: string): string {
+  return `'${value.replace(/'/g, "''")}'`;
+}
+
+function buildSafeDefaultEnvName(title: string): string {
+  const cleaned = title
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+  if (!cleaned) return "VAULTPASS_API_KEY";
+  const prefixed = /^[0-9]/.test(cleaned) ? `KEY_${cleaned}` : cleaned;
+  if (
+    prefixed.endsWith("_KEY") ||
+    prefixed.endsWith("_TOKEN") ||
+    prefixed.endsWith("_SECRET")
+  ) {
+    return prefixed;
+  }
+  return `${prefixed}_API_KEY`;
+}
 
 const CATEGORY_STYLE: Record<EntryCategory, { avatar: string; dot: string }> = {
   Login: { avatar: "bg-honey/15 text-honey", dot: "bg-honey" },
@@ -121,6 +143,7 @@ export function App() {
   const [filter, setFilter] = useState<SidebarFilter>("all");
   const [search, setSearch] = useState("");
   const [showDetailPassword, setShowDetailPassword] = useState(false);
+  const [revealedSecret, setRevealedSecret] = useState<string | null>(null);
 
   const [formOpen, setFormOpen] = useState(false);
   const [editingEntry, setEditingEntry] = useState<VaultEntry | null>(null);
@@ -168,6 +191,7 @@ export function App() {
     setEntries([]);
     setSelectedId(null);
     setShowDetailPassword(false);
+    setRevealedSecret(null);
     setConfirmDeleteId(null);
     setFormOpen(false);
     setSettingsOpen(false);
@@ -202,22 +226,9 @@ export function App() {
     return () => window.clearInterval(id);
   }, [clipboardCountdown]);
 
-  const passwordUsageCount = useMemo(() => {
-    const counts = new Map<string, number>();
-    for (const item of entries) {
-      counts.set(item.password, (counts.get(item.password) ?? 0) + 1);
-    }
-    return counts;
-  }, [entries]);
-
-  const isWeakOrReused = useCallback(
-    (entry: VaultEntry) => {
-      const score = evaluatePasswordStrength(entry.password).score;
-      const reused = (passwordUsageCount.get(entry.password) ?? 0) > 1;
-      return score <= 2 || reused;
-    },
-    [passwordUsageCount]
-  );
+  const isWeakOrReused = useCallback((entry: VaultEntry) => {
+    return entry.strengthScore <= 2 || entry.reusedCount > 1;
+  }, []);
 
   const weakCount = useMemo(
     () => entries.filter((e) => isWeakOrReused(e)).length,
@@ -256,6 +267,7 @@ export function App() {
 
   useEffect(() => {
     setShowDetailPassword(false);
+    setRevealedSecret(null);
     setConfirmDeleteId(null);
   }, [selectedEntry?.id]);
 
@@ -287,33 +299,60 @@ export function App() {
   }
 
   async function handleSaveEntry(input: VaultEntryInput) {
-    const saved = await vaultApi.upsertEntry(input);
-    setEntries((prev) => {
-      const idx = prev.findIndex((e) => e.id === saved.id);
-      if (idx >= 0) {
-        const copy = [...prev];
-        copy[idx] = saved;
-        return copy;
-      }
-      return [saved, ...prev];
-    });
-    setSelectedId(saved.id);
+    const result = await vaultApi.upsertEntry(input);
+    setEntries(result.entries);
+    setSelectedId(result.savedId);
+    setShowDetailPassword(false);
+    setRevealedSecret(null);
     showToast(input.id ? "Perubahan disimpan." : "Data baru ditambahkan ke vault.");
   }
 
   async function handleDeleteEntry(id: string) {
-    await vaultApi.deleteEntry(id);
-    setEntries((prev) => prev.filter((e) => e.id !== id));
+    const updatedEntries = await vaultApi.deleteEntry(id);
+    setEntries(updatedEntries);
     if (selectedId === id) {
       setSelectedId(null);
     }
+    setShowDetailPassword(false);
+    setRevealedSecret(null);
     setConfirmDeleteId(null);
     showToast("Dihapus dari vault.");
   }
 
   async function handleToggleFavorite(id: string) {
-    const updated = await vaultApi.toggleFavorite(id);
-    setEntries((prev) => prev.map((e) => (e.id === updated.id ? updated : e)));
+    const updatedEntries = await vaultApi.toggleFavorite(id);
+    setEntries(updatedEntries);
+  }
+
+  async function handleToggleRevealSecret(id: string) {
+    if (showDetailPassword) {
+      setShowDetailPassword(false);
+      setRevealedSecret(null);
+      return;
+    }
+    try {
+      const secret = await vaultApi.revealEntrySecret(id);
+      setRevealedSecret(secret);
+      setShowDetailPassword(true);
+    } catch (err) {
+      showToast(typeof err === "string" ? err : "Gagal membaca secret dari vault.");
+    }
+  }
+
+  async function handleCopyEntrySecret(id: string) {
+    try {
+      const clearSeconds = await vaultApi.copyEntrySecret(id);
+      setCopiedField("password");
+      setTimeout(() => setCopiedField(null), 1800);
+      if (clearSeconds > 0) {
+        setClipboardCountdown(clearSeconds);
+        showToast(`Secret disalin (clipboard dihapus otomatis dalam ${clearSeconds}d).`);
+      } else {
+        showToast("Secret disalin ke clipboard.");
+      }
+    } catch (err) {
+      showToast(typeof err === "string" ? err : "Gagal menyalin secret ke clipboard.");
+    }
   }
 
   async function handleCopy(
@@ -379,26 +418,22 @@ export function App() {
   }
 
   const detailStrength = selectedEntry
-    ? evaluatePasswordStrength(selectedEntry.password)
+    ? strengthFromScore(selectedEntry.strengthScore)
     : null;
-  const detailReusedCount = selectedEntry
-    ? passwordUsageCount.get(selectedEntry.password) ?? 1
-    : 1;
+  const detailReusedCount = selectedEntry ? selectedEntry.reusedCount : 1;
 
   const effectiveEnvName = selectedEntry
-    ? selectedEntry.envVarName?.trim() ||
-      `${selectedEntry.title
-        .trim()
-        .toUpperCase()
-        .replace(/[^A-Z0-9]+/g, "_")
-        .replace(/^_+|_+$/g, "")}_API_KEY`
-    : "API_KEY";
+    ? selectedEntry.envVarName?.trim() && ENV_VAR_PATTERN.test(selectedEntry.envVarName.trim())
+      ? selectedEntry.envVarName.trim()
+      : buildSafeDefaultEnvName(selectedEntry.title)
+    : "VAULTPASS_API_KEY";
 
+  const quotedCliBin = psSingleQuote(status.cliPath);
   const cliGetCommand = selectedEntry
-    ? `& "${CLI_PATH}" get "${selectedEntry.title}" --field key`
+    ? `& ${quotedCliBin} get ${psSingleQuote(selectedEntry.title)} --field key`
     : "";
   const cliRunCommand = selectedEntry
-    ? `& "${CLI_PATH}" run --key "${selectedEntry.title}" --env ${effectiveEnvName} -- `
+    ? `& ${quotedCliBin} run --key ${psSingleQuote(selectedEntry.title)} --env ${psSingleQuote(effectiveEnvName)} -- `
     : "";
 
   const favoriteCount = entries.filter((e) => e.favorite).length;
@@ -755,14 +790,14 @@ export function App() {
               >
                 <div className="flex items-center justify-between gap-3">
                   <code className="font-mono text-sm break-all text-cream">
-                    {showDetailPassword
-                      ? selectedEntry.password
-                      : "•".repeat(Math.min(selectedEntry.password.length, 24))}
+                    {showDetailPassword && revealedSecret !== null
+                      ? revealedSecret
+                      : "•".repeat(Math.min(Math.max(selectedEntry.passwordLength, 8), 24))}
                   </code>
                   <div className="flex shrink-0 items-center gap-1.5">
                     <button
                       type="button"
-                      onClick={() => setShowDetailPassword((prev) => !prev)}
+                      onClick={() => void handleToggleRevealSecret(selectedEntry.id)}
                       className="rounded-lg border border-ink-600 bg-ink-800 p-1.5 text-cream-soft transition hover:border-ink-500 hover:text-cream"
                       title={showDetailPassword ? "Sembunyikan" : "Tampilkan"}
                       aria-label={showDetailPassword ? "Sembunyikan secret" : "Tampilkan secret"}
@@ -775,7 +810,7 @@ export function App() {
                     </button>
                     <button
                       type="button"
-                      onClick={() => void handleCopy(selectedEntry.password, true, "password")}
+                      onClick={() => void handleCopyEntrySecret(selectedEntry.id)}
                       className="inline-flex items-center gap-1.5 rounded-lg bg-cream px-2.5 py-1.5 text-xs font-semibold text-ink-950 transition hover:bg-[#fff5d2] active:translate-y-px"
                     >
                       {copiedField === "password" ? (
@@ -807,71 +842,73 @@ export function App() {
                 )}
               </FieldCard>
 
-              {/* AI Agent Validation & Access Box */}
-              <div className="rounded-card border border-sky/20 bg-sky/[0.04] p-4">
-                <div className="mb-1.5 flex items-center justify-between gap-3">
-                  <div className="flex items-center gap-2 text-xs font-semibold text-sky">
-                    <Bot className="h-4 w-4" />
-                    Akses & Validasi Key untuk AI Agent (CLI)
-                  </div>
-                  <span className="shrink-0 text-[11px] text-mute">
-                    Dijaga Windows Hello
-                  </span>
-                </div>
-                <p className="mb-3 text-xs leading-relaxed text-mute">
-                  Berikan perintah ini ke AI Agent agar ia bisa membaca atau memvalidasi key{" "}
-                  <strong className="text-cream-soft">{selectedEntry.title}</strong> dengan
-                  persetujuanmu, tanpa kamu harus menempel key mentah di chat:
-                </p>
-
-                <div className="space-y-2">
-                  <div className="flex items-center justify-between gap-2 rounded-xl border border-ink-700 bg-ink-950 px-3 py-2">
-                    <div className="min-w-0 flex-1">
-                      <div className="text-[10px] font-medium text-faint">
-                        1. AI Agent membaca key langsung
-                      </div>
-                      <code className="block truncate font-mono text-[11px] text-cream-soft">
-                        {cliGetCommand}
-                      </code>
+              {/* AI Agent Validation & Access Box (API Key category only) */}
+              {selectedEntry.category === "API Key" && (
+                <div className="rounded-card border border-sky/20 bg-sky/[0.04] p-4">
+                  <div className="mb-1.5 flex items-center justify-between gap-3">
+                    <div className="flex items-center gap-2 text-xs font-semibold text-sky">
+                      <Bot className="h-4 w-4" />
+                      Akses & Validasi Key untuk AI Agent (CLI)
                     </div>
-                    <button
-                      type="button"
-                      onClick={() => void handleCopy(cliGetCommand, false, "cli-get")}
-                      className={smallBtn}
-                    >
-                      {copiedField === "cli-get" ? (
-                        <Check className="h-3 w-3 text-sage" />
-                      ) : (
-                        <Copy className="h-3 w-3" />
-                      )}
-                      Salin
-                    </button>
+                    <span className="shrink-0 text-[11px] text-mute">
+                      Dijaga Windows Hello
+                    </span>
                   </div>
+                  <p className="mb-3 text-xs leading-relaxed text-mute">
+                    Berikan perintah ini ke AI Agent agar ia bisa menyuntikkan atau membaca key{" "}
+                    <strong className="text-cream-soft">{selectedEntry.title}</strong> dengan
+                    persetujuanmu, tanpa menempel key mentah di chat:
+                  </p>
 
-                  <div className="flex items-center justify-between gap-2 rounded-xl border border-ink-700 bg-ink-950 px-3 py-2">
-                    <div className="min-w-0 flex-1">
-                      <div className="text-[10px] font-medium text-faint">
-                        2. Inject ke env variable ({effectiveEnvName}) tanpa bocor di log chat
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between gap-2 rounded-xl border border-ink-700 bg-ink-950 px-3 py-2">
+                      <div className="min-w-0 flex-1">
+                        <div className="text-[10px] font-medium text-faint">
+                          1. Direkomendasikan: Inject ke env variable ({effectiveEnvName}) tanpa bocor di log chat
+                        </div>
+                        <code className="block truncate font-mono text-[11px] text-sky">
+                          {cliRunCommand}&lt;perintah-validasi&gt;
+                        </code>
                       </div>
-                      <code className="block truncate font-mono text-[11px] text-sky">
-                        {cliRunCommand}&lt;perintah-validasi&gt;
-                      </code>
+                      <button
+                        type="button"
+                        onClick={() => void handleCopy(cliRunCommand, false, "cli-run")}
+                        className={smallBtn}
+                      >
+                        {copiedField === "cli-run" ? (
+                          <Check className="h-3 w-3 text-sage" />
+                        ) : (
+                          <Copy className="h-3 w-3" />
+                        )}
+                        Salin
+                      </button>
                     </div>
-                    <button
-                      type="button"
-                      onClick={() => void handleCopy(cliRunCommand, false, "cli-run")}
-                      className={smallBtn}
-                    >
-                      {copiedField === "cli-run" ? (
-                        <Check className="h-3 w-3 text-sage" />
-                      ) : (
-                        <Copy className="h-3 w-3" />
-                      )}
-                      Salin
-                    </button>
+
+                    <div className="flex items-center justify-between gap-2 rounded-xl border border-ink-700 bg-ink-950 px-3 py-2">
+                      <div className="min-w-0 flex-1">
+                        <div className="text-[10px] font-medium text-faint">
+                          2. Baca nilai key langsung lewat CLI
+                        </div>
+                        <code className="block truncate font-mono text-[11px] text-cream-soft">
+                          {cliGetCommand}
+                        </code>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => void handleCopy(cliGetCommand, false, "cli-get")}
+                        className={smallBtn}
+                      >
+                        {copiedField === "cli-get" ? (
+                          <Check className="h-3 w-3 text-sage" />
+                        ) : (
+                          <Copy className="h-3 w-3" />
+                        )}
+                        Salin
+                      </button>
+                    </div>
                   </div>
                 </div>
-              </div>
+              )}
 
               {/* URL */}
               {selectedEntry.url && (

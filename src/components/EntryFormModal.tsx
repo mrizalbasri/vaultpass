@@ -18,6 +18,8 @@ interface EntryFormModalProps {
   onSave: (input: VaultEntryInput) => Promise<void>;
 }
 
+const ENV_VAR_PATTERN = /^[A-Z_][A-Z0-9_]*$/;
+
 function suggestEnvVarName(title: string): string {
   const cleaned = title
     .trim()
@@ -25,10 +27,15 @@ function suggestEnvVarName(title: string): string {
     .replace(/[^A-Z0-9]+/g, "_")
     .replace(/^_+|_+$/g, "");
   if (!cleaned) return "";
-  if (cleaned.endsWith("_KEY") || cleaned.endsWith("_TOKEN") || cleaned.endsWith("_SECRET")) {
-    return cleaned;
+  const prefixed = /^[0-9]/.test(cleaned) ? `KEY_${cleaned}` : cleaned;
+  if (
+    prefixed.endsWith("_KEY") ||
+    prefixed.endsWith("_TOKEN") ||
+    prefixed.endsWith("_SECRET")
+  ) {
+    return prefixed;
   }
-  return `${cleaned}_API_KEY`;
+  return `${prefixed}_API_KEY`;
 }
 
 export function EntryFormModal({
@@ -47,20 +54,51 @@ export function EntryFormModal({
   const [notes, setNotes] = useState("");
   const [favorite, setFavorite] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
+  const [loadingSecret, setLoadingSecret] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!open) return;
+    if (!open) {
+      setPassword("");
+      setShowPassword(false);
+      setLoadingSecret(false);
+      return;
+    }
+
+    let cancelled = false;
+    setShowPassword(false);
+    setError(null);
+
     if (initialEntry) {
       setTitle(initialEntry.title);
       setUsername(initialEntry.username);
-      setPassword(initialEntry.password);
+      setPassword("");
       setUrl(initialEntry.url);
       setCategory(initialEntry.category);
       setEnvVarName(initialEntry.envVarName || "");
       setNotes(initialEntry.notes);
       setFavorite(initialEntry.favorite);
+      setLoadingSecret(true);
+      void vaultApi
+        .revealEntrySecret(initialEntry.id)
+        .then((secret) => {
+          if (!cancelled) {
+            setPassword(secret);
+          }
+        })
+        .catch((err) => {
+          if (!cancelled) {
+            setError(
+              typeof err === "string" ? err : "Gagal memuat password/secret item."
+            );
+          }
+        })
+        .finally(() => {
+          if (!cancelled) {
+            setLoadingSecret(false);
+          }
+        });
     } else {
       setTitle("");
       setUsername("");
@@ -70,9 +108,12 @@ export function EntryFormModal({
       setEnvVarName("");
       setNotes("");
       setFavorite(false);
+      setLoadingSecret(false);
     }
-    setShowPassword(false);
-    setError(null);
+
+    return () => {
+      cancelled = true;
+    };
   }, [open, initialEntry, defaultCategory]);
 
   useEscapeKey(open, onClose);
@@ -114,6 +155,12 @@ export function EntryFormModal({
 
     const finalEnvVar =
       envVarName.trim() || (isApiKey ? suggestEnvVarName(title) : "");
+    if (finalEnvVar && !ENV_VAR_PATTERN.test(finalEnvVar)) {
+      setError(
+        "Nama Env Variable hanya boleh berisi huruf A-Z, angka 0-9, dan underscore (_), serta tidak boleh diawali angka."
+      );
+      return;
+    }
 
     setSaving(true);
     try {
@@ -232,7 +279,9 @@ export function EntryFormModal({
               <input
                 type="text"
                 value={envVarName}
-                onChange={(e) => setEnvVarName(e.target.value.toUpperCase())}
+                onChange={(e) =>
+                  setEnvVarName(e.target.value.toUpperCase().replace(/[^A-Z0-9_]/g, ""))
+                }
                 placeholder={suggestEnvVarName(title) || "OPENAI_API_KEY"}
                 className="w-full rounded-xl border border-ink-600/80 bg-ink-950 px-3.5 py-2 font-mono text-xs text-sky placeholder:text-faint outline-none focus:border-honey/70 focus:ring-4 focus:ring-honey/10"
               />
@@ -259,13 +308,16 @@ export function EntryFormModal({
               <input
                 type={showPassword ? "text" : "password"}
                 value={password}
+                disabled={loadingSecret}
                 onChange={(e) => setPassword(e.target.value)}
                 placeholder={
-                  isApiKey
-                    ? "sk-... / ghp_... / secret token"
-                    : "Masukkan atau generate password..."
+                  loadingSecret
+                    ? "Memuat secret dari vault..."
+                    : isApiKey
+                      ? "sk-... / ghp_... / secret token"
+                      : "Masukkan atau generate password..."
                 }
-                className="w-full rounded-xl border border-ink-600/80 bg-ink-950 py-2 pr-10 pl-3.5 font-mono text-sm text-cream placeholder:text-faint outline-none focus:border-honey/70 focus:ring-4 focus:ring-honey/10"
+                className="w-full rounded-xl border border-ink-600/80 bg-ink-950 py-2 pr-10 pl-3.5 font-mono text-sm text-cream placeholder:text-faint outline-none focus:border-honey/70 focus:ring-4 focus:ring-honey/10 disabled:opacity-60"
               />
               <button
                 type="button"
@@ -342,7 +394,7 @@ export function EntryFormModal({
             </button>
             <button
               type="submit"
-              disabled={saving}
+              disabled={saving || loadingSecret}
               className="rounded-xl bg-cream px-4 py-2 text-xs font-medium text-ink-950 hover:bg-[#fff5d2] disabled:opacity-60"
             >
               {saving

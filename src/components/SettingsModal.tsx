@@ -317,16 +317,23 @@ export function SettingsModal({
               </span>
             </div>
             <p className="mb-3 text-xs text-cream-soft/90">
-              Kunci vault dilindungi oleh <strong>Windows DPAPI</strong> dan hanya terbuka saat kamu
-              menyetujui dialog <strong>Sidik Jari / Windows Hello</strong>. Saat aktif, AI Agent
-              bisa membaca atau menjalankan validasi API Key sekali-tampil atas izinmu.
+              Kunci vault dibungkus <strong>Windows DPAPI + entropi Credential Manager</strong> dan
+              diverifikasi dengan <strong>Windows Hello</strong> (Sidik Jari / Wajah / PIN). Saat
+              aktif, <code>vaultpass-cli</code> hanya mengizinkan akses ke item berkategori{" "}
+              <strong>API Key</strong> dengan pencocokan nama/ID persis.
             </p>
+            {!status.windowsHelloAvailable && !status.biometricEnabled && (
+              <p className="mb-3 rounded-lg border border-honey/25 bg-honey/10 px-3 py-2 text-xs text-honey">
+                Windows Hello belum aktif di perangkat ini. Aktifkan PIN atau Sidik Jari Windows
+                Hello di Pengaturan Windows terlebih dahulu.
+              </p>
+            )}
             <div className="flex flex-wrap items-center gap-2">
               <button
                 type="button"
-                disabled={busy}
+                disabled={busy || (!status.windowsHelloAvailable && !status.biometricEnabled)}
                 onClick={() => void handleToggleBiometric()}
-                className={`inline-flex items-center gap-2 rounded-xl px-3.5 py-2 text-xs font-medium transition disabled:opacity-50 ${
+                className={`inline-flex items-center gap-2 rounded-xl px-3.5 py-2 text-xs font-medium transition disabled:cursor-not-allowed disabled:opacity-50 ${
                   status.biometricEnabled
                     ? "border border-coral/40 bg-coral/10 text-coral hover:bg-coral/20"
                     : "bg-honey text-ink-950 hover:bg-[#f2c466]"
@@ -342,10 +349,10 @@ export function SettingsModal({
             <div className="mt-3 rounded-lg border border-ink-700 bg-ink-950/90 p-3">
               <div className="mb-1 flex items-center gap-1.5 text-[11px] font-medium text-cream-soft">
                 <Bot className="h-3.5 w-3.5 text-honey" />
-                Perintah CLI untuk AI Agent (Baca / Inject Key):
+                Perintah CLI untuk AI Agent (Khusus Kategori API Key):
               </div>
               <pre className="overflow-x-auto font-mono text-[11px] leading-relaxed text-mute">
-                {`vaultpass-cli.exe get "OpenAI" --field key\nvaultpass-cli.exe run --key "OpenAI" --env OPENAI_API_KEY -- python script.py`}
+                {`vaultpass-cli.exe run --key 'OpenAI' --env 'OPENAI_API_KEY' -- python script.py\nvaultpass-cli.exe get 'OpenAI' --field key`}
               </pre>
             </div>
           </div>

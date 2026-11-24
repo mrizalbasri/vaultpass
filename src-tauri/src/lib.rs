@@ -1,37 +1,43 @@
 pub mod biometric;
+pub mod clipboard;
 pub mod crypto;
 pub mod vault;
 
 use std::collections::HashSet;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use arboard::Clipboard;
 use serde::{Deserialize, Serialize};
-use tauri::{Manager, State};
+use tauri::{Manager, State, WebviewWindow};
 use uuid::Uuid;
 use zeroize::Zeroizing;
 
 use crate::biometric::{
-    dpapi_protect_key, dpapi_unprotect_key, is_windows_hello_available,
-    request_windows_hello_verification,
+    clear_biometric_secret_store, dpapi_protect_key, dpapi_unprotect_key,
+    is_windows_hello_available, request_windows_hello_verification,
 };
+use crate::clipboard::{clear_clipboard_if_matches, set_clipboard_text};
 use crate::crypto::{
     derive_key, generate_password as generate_random_password, KdfParams, PasswordGenOptions,
 };
 use crate::vault::{
     normalize_hint, now_iso, open_vault_with_key, open_vault_with_password, read_envelope,
-    save_unlocked_vault, write_envelope_atomic, UnlockedVault, VaultEntry, VaultEntryInput,
-    VaultPayload,
+    refresh_backup_after_rekey, sanitize_imported_env_var_name, save_unlocked_vault,
+    summarize_entries, validate_env_var_name, write_envelope_atomic, UnlockedVault, VaultEntry,
+    VaultEntryInput, VaultEntrySummary, VaultPayload,
 };
+
+pub const BIOMETRIC_CONFIG_VERSION: u32 = 2;
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AppConfig {
     pub vault_path: PathBuf,
+    #[serde(default)]
+    pub biometric_version: u32,
     #[serde(default)]
     pub biometric_key_dpapi_b64: Option<String>,
     #[serde(default)]
@@ -39,19 +45,51 @@ pub struct AppConfig {
 }
 
 impl AppConfig {
-    pub fn is_biometric_enabled_for(&self, path: &PathBuf) -> bool {
-        self.biometric_key_dpapi_b64.is_some()
-            && self.biometric_vault_path.as_ref() == Some(path)
+    pub fn is_biometric_enabled_for(&self, path: &Path) -> bool {
+        self.biometric_version == BIOMETRIC_CONFIG_VERSION
+            && self.biometric_key_dpapi_b64.is_some()
+            && self.biometric_vault_path.as_deref() == Some(path)
             && path.exists()
     }
 }
 
 pub fn default_app_data_dir() -> PathBuf {
     if let Ok(local_app_data) = std::env::var("LOCALAPPDATA") {
-        PathBuf::from(local_app_data).join("com.rizal.vaultpass")
-    } else {
-        PathBuf::from("D:\\VaultPassData")
+        if !local_app_data.trim().is_empty() {
+            return PathBuf::from(local_app_data).join("com.rizal.vaultpass");
+        }
     }
+    if let Ok(user_profile) = std::env::var("USERPROFILE") {
+        if !user_profile.trim().is_empty() {
+            return PathBuf::from(user_profile)
+                .join("AppData")
+                .join("Local")
+                .join("com.rizal.vaultpass");
+        }
+    }
+    std::env::temp_dir().join("com.rizal.vaultpass")
+}
+
+pub fn resolve_cli_executable_path() -> String {
+    if let Ok(current_exe) = std::env::current_exe() {
+        if let Some(exe_dir) = current_exe.parent() {
+            let sibling = exe_dir.join("vaultpass-cli.exe");
+            if sibling.exists() {
+                return sibling.to_string_lossy().to_string();
+            }
+            // In `tauri dev`, `current_exe` is in `target/debug/` while the user may have
+            // built `target/release/vaultpass-cli.exe` (or vice versa).
+            if let Some(target_dir) = exe_dir.parent() {
+                for profile in ["release", "debug"] {
+                    let candidate = target_dir.join(profile).join("vaultpass-cli.exe");
+                    if candidate.exists() {
+                        return candidate.to_string_lossy().to_string();
+                    }
+                }
+            }
+        }
+    }
+    "vaultpass-cli.exe".to_string()
 }
 
 pub fn load_or_init_config() -> Result<(PathBuf, AppConfig), String> {
@@ -68,26 +106,13 @@ pub fn load_or_init_config() -> Result<(PathBuf, AppConfig), String> {
         }
     }
 
-    let legacy_path = app_data_dir.join("vault.vpass");
-    let d_root = PathBuf::from("D:\\");
-    let vault_path = if d_root.exists() {
-        let d_vault_dir = d_root.join("VaultPassData");
-        let d_vault_path = d_vault_dir.join("vault.vpass");
-        if !d_vault_path.exists() && legacy_path.exists() {
-            fs::create_dir_all(&d_vault_dir)
-                .map_err(|e| format!("Gagal membuat folder D:\\VaultPassData: {e}"))?;
-            fs::copy(&legacy_path, &d_vault_path)
-                .map_err(|e| format!("Gagal memindahkan vault ke drive D: {e}"))?;
-        }
-        d_vault_path
-    } else {
-        legacy_path
-    };
+    let vault_path = app_data_dir.join("vault.vpass");
 
     Ok((
         config_path,
         AppConfig {
             vault_path,
+            biometric_version: 0,
             biometric_key_dpapi_b64: None,
             biometric_vault_path: None,
         },
@@ -99,7 +124,6 @@ struct AppState {
     config: Mutex<AppConfig>,
     unlocked: Mutex<Option<UnlockedVault>>,
     clipboard_generation: Arc<AtomicU64>,
-    windows_hello_available: bool,
 }
 
 impl AppState {
@@ -133,12 +157,43 @@ impl AppState {
     }
 }
 
+fn window_hwnd_isize(window: &WebviewWindow) -> Option<isize> {
+    window.hwnd().ok().map(|h| h.0 as isize)
+}
+
+fn copy_with_optional_auto_clear(
+    secret_text: Zeroizing<String>,
+    is_sensitive: bool,
+    clear_seconds: u32,
+    clipboard_generation: &Arc<AtomicU64>,
+) -> Result<u32, String> {
+    set_clipboard_text(secret_text.as_str(), is_sensitive)?;
+
+    if !is_sensitive || clear_seconds == 0 {
+        return Ok(0);
+    }
+
+    let gen = clipboard_generation.fetch_add(1, Ordering::SeqCst) + 1;
+    let gen_counter = Arc::clone(clipboard_generation);
+
+    std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_secs(u64::from(clear_seconds)));
+        if gen_counter.load(Ordering::SeqCst) != gen {
+            return;
+        }
+        clear_clipboard_if_matches(secret_text.as_str());
+    });
+
+    Ok(clear_seconds)
+}
+
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct VaultStatus {
     exists: bool,
     unlocked: bool,
     vault_path: String,
+    cli_path: String,
     entry_count: usize,
     auto_lock_minutes: u32,
     clipboard_clear_seconds: u32,
@@ -147,10 +202,18 @@ struct VaultStatus {
     password_hint: Option<String>,
 }
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct UpsertEntryResponse {
+    saved_id: String,
+    entries: Vec<VaultEntrySummary>,
+}
+
 #[tauri::command]
 fn vault_status(state: State<'_, AppState>) -> Result<VaultStatus, String> {
     let cfg = state.current_config()?;
     let vault_path = &cfg.vault_path;
+    let windows_hello_available = is_windows_hello_available();
     let guard = state
         .unlocked
         .lock()
@@ -180,11 +243,12 @@ fn vault_status(state: State<'_, AppState>) -> Result<VaultStatus, String> {
         exists: vault_path.exists(),
         unlocked,
         vault_path: vault_path.to_string_lossy().to_string(),
+        cli_path: resolve_cli_executable_path(),
         entry_count,
         auto_lock_minutes,
         clipboard_clear_seconds,
-        windows_hello_available: state.windows_hello_available,
-        biometric_enabled: cfg.is_biometric_enabled_for(vault_path),
+        windows_hello_available,
+        biometric_enabled: windows_hello_available && cfg.is_biometric_enabled_for(vault_path),
         password_hint,
     })
 }
@@ -195,9 +259,10 @@ fn create_vault(
     password_hint: Option<String>,
     state: State<'_, AppState>,
 ) -> Result<VaultStatus, String> {
-    let vault_path = state.current_vault_path()?;
+    let cfg = state.current_config()?;
+    let vault_path = cfg.vault_path.clone();
     let master_password = Zeroizing::new(master_password);
-    if master_password.len() < 10 {
+    if master_password.chars().count() < 10 {
         return Err("Master password minimal 10 karakter.".to_string());
     }
     if vault_path.exists() {
@@ -214,6 +279,9 @@ fn create_vault(
     };
 
     save_unlocked_vault(&vault_path, &unlocked_vault)?;
+    if !state.config_path.exists() {
+        state.save_config(cfg)?;
+    }
 
     let mut guard = state
         .unlocked
@@ -249,7 +317,7 @@ fn update_password_hint(
 fn unlock_vault(
     master_password: String,
     state: State<'_, AppState>,
-) -> Result<Vec<VaultEntry>, String> {
+) -> Result<Vec<VaultEntrySummary>, String> {
     let vault_path = state.current_vault_path()?;
     let master_password = Zeroizing::new(master_password);
     if !vault_path.exists() {
@@ -257,7 +325,7 @@ fn unlock_vault(
     }
 
     let unlocked_vault = open_vault_with_password(&vault_path, &master_password)?;
-    let entries = unlocked_vault.payload.entries.clone();
+    let summaries = summarize_entries(&unlocked_vault.payload.entries);
 
     let mut guard = state
         .unlocked
@@ -265,11 +333,14 @@ fn unlock_vault(
         .map_err(|_| "State vault terkunci internal.".to_string())?;
     *guard = Some(unlocked_vault);
 
-    Ok(entries)
+    Ok(summaries)
 }
 
 #[tauri::command]
-fn unlock_vault_biometric(state: State<'_, AppState>) -> Result<Vec<VaultEntry>, String> {
+fn unlock_vault_biometric(
+    window: WebviewWindow,
+    state: State<'_, AppState>,
+) -> Result<Vec<VaultEntrySummary>, String> {
     let cfg = state.current_config()?;
     let vault_path = cfg.vault_path.clone();
     if !cfg.is_biometric_enabled_for(&vault_path) {
@@ -280,10 +351,13 @@ fn unlock_vault_biometric(state: State<'_, AppState>) -> Result<Vec<VaultEntry>,
         .biometric_key_dpapi_b64
         .ok_or_else(|| "Data kunci biometrik tidak ditemukan.".to_string())?;
 
-    request_windows_hello_verification("Buka VaultPass dengan Sidik Jari / Windows Hello")?;
+    request_windows_hello_verification(
+        "Buka VaultPass dengan Windows Hello",
+        window_hwnd_isize(&window),
+    )?;
     let key = dpapi_unprotect_key(&dpapi_b64)?;
     let unlocked_vault = open_vault_with_key(&vault_path, key)?;
-    let entries = unlocked_vault.payload.entries.clone();
+    let summaries = summarize_entries(&unlocked_vault.payload.entries);
 
     let mut guard = state
         .unlocked
@@ -291,11 +365,21 @@ fn unlock_vault_biometric(state: State<'_, AppState>) -> Result<Vec<VaultEntry>,
         .map_err(|_| "State vault terkunci internal.".to_string())?;
     *guard = Some(unlocked_vault);
 
-    Ok(entries)
+    Ok(summaries)
 }
 
 #[tauri::command]
-fn enable_biometric_unlock(state: State<'_, AppState>) -> Result<VaultStatus, String> {
+fn enable_biometric_unlock(
+    window: WebviewWindow,
+    state: State<'_, AppState>,
+) -> Result<VaultStatus, String> {
+    if !is_windows_hello_available() {
+        return Err(
+            "Windows Hello belum aktif di perangkat ini. Aktifkan PIN atau Sidik Jari Windows Hello di Pengaturan Windows terlebih dahulu."
+                .to_string(),
+        );
+    }
+
     let key_copy: Zeroizing<[u8; 32]> = {
         let guard = state
             .unlocked
@@ -308,11 +392,13 @@ fn enable_biometric_unlock(state: State<'_, AppState>) -> Result<VaultStatus, St
     };
 
     request_windows_hello_verification(
-        "Aktifkan Sidik Jari / Windows Hello & akses AI Agent CLI untuk VaultPass",
+        "Aktifkan Windows Hello & akses AI Agent CLI untuk VaultPass",
+        window_hwnd_isize(&window),
     )?;
 
     let dpapi_b64 = dpapi_protect_key(&key_copy)?;
     let mut cfg = state.current_config()?;
+    cfg.biometric_version = BIOMETRIC_CONFIG_VERSION;
     cfg.biometric_key_dpapi_b64 = Some(dpapi_b64);
     cfg.biometric_vault_path = Some(cfg.vault_path.clone());
     state.save_config(cfg)?;
@@ -322,7 +408,9 @@ fn enable_biometric_unlock(state: State<'_, AppState>) -> Result<VaultStatus, St
 
 #[tauri::command]
 fn disable_biometric_unlock(state: State<'_, AppState>) -> Result<VaultStatus, String> {
+    clear_biometric_secret_store();
     let mut cfg = state.current_config()?;
+    cfg.biometric_version = 0;
     cfg.biometric_key_dpapi_b64 = None;
     cfg.biometric_vault_path = None;
     state.save_config(cfg)?;
@@ -340,7 +428,7 @@ fn lock_vault(state: State<'_, AppState>) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn list_entries(state: State<'_, AppState>) -> Result<Vec<VaultEntry>, String> {
+fn list_entries(state: State<'_, AppState>) -> Result<Vec<VaultEntrySummary>, String> {
     let guard = state
         .unlocked
         .lock()
@@ -348,17 +436,64 @@ fn list_entries(state: State<'_, AppState>) -> Result<Vec<VaultEntry>, String> {
     let vault = guard
         .as_ref()
         .ok_or_else(|| "Vault sedang terkunci.".to_string())?;
-    Ok(vault.payload.entries.clone())
+    Ok(summarize_entries(&vault.payload.entries))
 }
 
 #[tauri::command]
-fn upsert_entry(entry: VaultEntryInput, state: State<'_, AppState>) -> Result<VaultEntry, String> {
+fn reveal_entry_secret(id: String, state: State<'_, AppState>) -> Result<String, String> {
+    let guard = state
+        .unlocked
+        .lock()
+        .map_err(|_| "State vault terkunci internal.".to_string())?;
+    let vault = guard
+        .as_ref()
+        .ok_or_else(|| "Vault sedang terkunci.".to_string())?;
+    let entry = vault
+        .payload
+        .entries
+        .iter()
+        .find(|item| item.id == id)
+        .ok_or_else(|| "Item tidak ditemukan di dalam vault.".to_string())?;
+    Ok(entry.password.clone())
+}
+
+#[tauri::command]
+fn copy_entry_secret(id: String, state: State<'_, AppState>) -> Result<u32, String> {
+    let (secret, clear_seconds) = {
+        let guard = state
+            .unlocked
+            .lock()
+            .map_err(|_| "State vault terkunci internal.".to_string())?;
+        let vault = guard
+            .as_ref()
+            .ok_or_else(|| "Vault sedang terkunci.".to_string())?;
+        let entry = vault
+            .payload
+            .entries
+            .iter()
+            .find(|item| item.id == id)
+            .ok_or_else(|| "Item tidak ditemukan di dalam vault.".to_string())?;
+        (
+            Zeroizing::new(entry.password.clone()),
+            vault.payload.settings.clipboard_clear_seconds,
+        )
+    };
+
+    copy_with_optional_auto_clear(secret, true, clear_seconds, &state.clipboard_generation)
+}
+
+#[tauri::command]
+fn upsert_entry(
+    entry: VaultEntryInput,
+    state: State<'_, AppState>,
+) -> Result<UpsertEntryResponse, String> {
     if entry.title.trim().is_empty() {
         return Err("Nama layanan/akun wajib diisi.".to_string());
     }
     if entry.password.is_empty() {
         return Err("Password atau Key wajib diisi.".to_string());
     }
+    let validated_env = validate_env_var_name(&entry.env_var_name)?;
 
     let vault_path = state.current_vault_path()?;
     let mut guard = state
@@ -370,7 +505,7 @@ fn upsert_entry(entry: VaultEntryInput, state: State<'_, AppState>) -> Result<Va
         .ok_or_else(|| "Vault sedang terkunci.".to_string())?;
 
     let now = now_iso();
-    let saved = if let Some(ref existing_id) = entry.id {
+    let saved_id = if let Some(ref existing_id) = entry.id {
         if let Some(pos) = vault
             .payload
             .entries
@@ -385,41 +520,43 @@ fn upsert_entry(entry: VaultEntryInput, state: State<'_, AppState>) -> Result<Va
                 password: entry.password,
                 url: entry.url.trim().to_string(),
                 category: entry.category,
-                env_var_name: entry.env_var_name.trim().to_string(),
+                env_var_name: validated_env,
                 notes: entry.notes,
                 favorite: entry.favorite,
                 created_at,
                 updated_at: now,
             };
-            vault.payload.entries[pos] = updated.clone();
-            updated
+            vault.payload.entries[pos] = updated;
+            existing_id.clone()
         } else {
             return Err("Akun yang ingin diperbarui tidak ditemukan.".to_string());
         }
     } else {
+        let new_id = Uuid::new_v4().to_string();
         let created = VaultEntry {
-            id: Uuid::new_v4().to_string(),
+            id: new_id.clone(),
             title: entry.title.trim().to_string(),
             username: entry.username.trim().to_string(),
             password: entry.password,
             url: entry.url.trim().to_string(),
             category: entry.category,
-            env_var_name: entry.env_var_name.trim().to_string(),
+            env_var_name: validated_env,
             notes: entry.notes,
             favorite: entry.favorite,
             created_at: now.clone(),
             updated_at: now,
         };
-        vault.payload.entries.insert(0, created.clone());
-        created
+        vault.payload.entries.insert(0, created);
+        new_id
     };
 
     save_unlocked_vault(&vault_path, vault)?;
-    Ok(saved)
+    let entries = summarize_entries(&vault.payload.entries);
+    Ok(UpsertEntryResponse { saved_id, entries })
 }
 
 #[tauri::command]
-fn delete_entry(id: String, state: State<'_, AppState>) -> Result<(), String> {
+fn delete_entry(id: String, state: State<'_, AppState>) -> Result<Vec<VaultEntrySummary>, String> {
     let vault_path = state.current_vault_path()?;
     let mut guard = state
         .unlocked
@@ -435,11 +572,15 @@ fn delete_entry(id: String, state: State<'_, AppState>) -> Result<(), String> {
         return Err("Akun tidak ditemukan.".to_string());
     }
 
-    save_unlocked_vault(&vault_path, vault)
+    save_unlocked_vault(&vault_path, vault)?;
+    Ok(summarize_entries(&vault.payload.entries))
 }
 
 #[tauri::command]
-fn toggle_favorite(id: String, state: State<'_, AppState>) -> Result<VaultEntry, String> {
+fn toggle_favorite(
+    id: String,
+    state: State<'_, AppState>,
+) -> Result<Vec<VaultEntrySummary>, String> {
     let vault_path = state.current_vault_path()?;
     let mut guard = state
         .unlocked
@@ -458,10 +599,9 @@ fn toggle_favorite(id: String, state: State<'_, AppState>) -> Result<VaultEntry,
 
     target.favorite = !target.favorite;
     target.updated_at = now_iso();
-    let updated = target.clone();
 
     save_unlocked_vault(&vault_path, vault)?;
-    Ok(updated)
+    Ok(summarize_entries(&vault.payload.entries))
 }
 
 #[tauri::command]
@@ -475,32 +615,46 @@ fn change_master_password(
     let current_password = Zeroizing::new(current_password);
     let new_password = Zeroizing::new(new_password);
 
-    if new_password.len() < 10 {
+    if new_password.chars().count() < 10 {
         return Err("Master password baru minimal 10 karakter.".to_string());
     }
 
     let _verified = open_vault_with_password(&vault_path, &current_password)
         .map_err(|_| "Master password saat ini salah.".to_string())?;
 
-    let mut guard = state
-        .unlocked
-        .lock()
-        .map_err(|_| "State vault terkunci internal.".to_string())?;
-    let vault = guard
-        .as_mut()
-        .ok_or_else(|| "Vault sedang terkunci.".to_string())?;
+    let new_key = {
+        let mut guard = state
+            .unlocked
+            .lock()
+            .map_err(|_| "State vault terkunci internal.".to_string())?;
+        let vault = guard
+            .as_mut()
+            .ok_or_else(|| "Vault sedang terkunci.".to_string())?;
 
-    let new_kdf = KdfParams::new_random();
-    let new_key = derive_key(&new_password, &new_kdf)?;
-    vault.kdf = new_kdf;
-    vault.key = new_key.clone();
+        let new_kdf = KdfParams::new_random();
+        let derived_key = derive_key(&new_password, &new_kdf)?;
+        vault.kdf = new_kdf;
+        vault.key = derived_key.clone();
 
-    save_unlocked_vault(&vault_path, vault)?;
+        save_unlocked_vault(&vault_path, vault)?;
+        refresh_backup_after_rekey(&vault_path, vault)?;
+        derived_key
+    };
 
     if cfg.is_biometric_enabled_for(&vault_path) {
-        if let Ok(dpapi_b64) = dpapi_protect_key(&new_key) {
-            cfg.biometric_key_dpapi_b64 = Some(dpapi_b64);
-            let _ = state.save_config(cfg);
+        match dpapi_protect_key(&new_key) {
+            Ok(dpapi_b64) => {
+                cfg.biometric_version = BIOMETRIC_CONFIG_VERSION;
+                cfg.biometric_key_dpapi_b64 = Some(dpapi_b64);
+                state.save_config(cfg)?;
+            }
+            Err(_) => {
+                clear_biometric_secret_store();
+                cfg.biometric_version = 0;
+                cfg.biometric_key_dpapi_b64 = None;
+                cfg.biometric_vault_path = None;
+                let _ = state.save_config(cfg);
+            }
         }
     }
 
@@ -513,6 +667,13 @@ fn update_settings(
     clipboard_clear_seconds: u32,
     state: State<'_, AppState>,
 ) -> Result<VaultStatus, String> {
+    if auto_lock_minutes > 1_440 {
+        return Err("Batas auto-lock maksimal 1440 menit (24 jam).".to_string());
+    }
+    if clipboard_clear_seconds > 600 {
+        return Err("Batas pembersihan clipboard maksimal 600 detik.".to_string());
+    }
+
     let vault_path = state.current_vault_path()?;
     {
         let mut guard = state
@@ -555,35 +716,12 @@ fn copy_secret(
         vault.payload.settings.clipboard_clear_seconds
     };
 
-    let mut clipboard =
-        Clipboard::new().map_err(|e| format!("Gagal mengakses clipboard sistem: {e}"))?;
-    clipboard
-        .set_text(text.as_str())
-        .map_err(|e| format!("Gagal menyalin ke clipboard: {e}"))?;
-
-    if !is_sensitive || clear_seconds == 0 {
-        return Ok(0);
-    }
-
-    let gen = state.clipboard_generation.fetch_add(1, Ordering::SeqCst) + 1;
-    let gen_counter = Arc::clone(&state.clipboard_generation);
-    let copied_secret = text;
-
-    std::thread::spawn(move || {
-        std::thread::sleep(Duration::from_secs(u64::from(clear_seconds)));
-        if gen_counter.load(Ordering::SeqCst) != gen {
-            return;
-        }
-        if let Ok(mut cb) = Clipboard::new() {
-            if let Ok(current) = cb.get_text() {
-                if current == *copied_secret {
-                    let _ = cb.clear();
-                }
-            }
-        }
-    });
-
-    Ok(clear_seconds)
+    copy_with_optional_auto_clear(
+        text,
+        is_sensitive,
+        clear_seconds,
+        &state.clipboard_generation,
+    )
 }
 
 #[tauri::command]
@@ -653,8 +791,16 @@ fn import_encrypted_backup(
 
     let mut added = 0usize;
     for entry in &imported.payload.entries {
-        if !existing_ids.contains(&entry.id) {
-            vault.payload.entries.push(entry.clone());
+        if !existing_ids.contains(&entry.id)
+            && !entry.title.trim().is_empty()
+            && !entry.password.is_empty()
+        {
+            let mut sanitized = entry.clone();
+            sanitized.title = sanitized.title.trim().to_string();
+            sanitized.username = sanitized.username.trim().to_string();
+            sanitized.url = sanitized.url.trim().to_string();
+            sanitized.env_var_name = sanitize_imported_env_var_name(&sanitized.env_var_name);
+            vault.payload.entries.push(sanitized);
             added += 1;
         }
     }
@@ -675,7 +821,7 @@ fn pick_vault_save_location(state: State<'_, AppState>) -> Result<Option<VaultSt
     let default_dir = old_path
         .parent()
         .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("D:\\"));
+        .unwrap_or_else(default_app_data_dir);
     let default_name = old_path
         .file_name()
         .and_then(|n| n.to_str())
@@ -696,7 +842,8 @@ fn pick_vault_save_location(state: State<'_, AppState>) -> Result<Option<VaultSt
         dest_path.set_extension("vpass");
     }
 
-    if old_path.exists() && old_path != dest_path {
+    let moved_existing = old_path.exists() && old_path != dest_path;
+    if moved_existing {
         let envelope = read_envelope(&old_path)?;
         write_envelope_atomic(&dest_path, &envelope)?;
     }
@@ -706,6 +853,13 @@ fn pick_vault_save_location(state: State<'_, AppState>) -> Result<Option<VaultSt
         cfg.biometric_vault_path = Some(dest_path);
     }
     state.save_config(cfg)?;
+
+    if moved_existing {
+        let _ = fs::remove_file(&old_path);
+        let _ = fs::remove_file(old_path.with_extension("vpass.bak"));
+        let _ = fs::remove_file(old_path.with_extension("vpass.tmp"));
+    }
+
     Ok(Some(vault_status(state)?))
 }
 
@@ -716,7 +870,7 @@ fn pick_existing_vault_file(state: State<'_, AppState>) -> Result<Option<VaultSt
     let default_dir = old_path
         .parent()
         .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("D:\\"));
+        .unwrap_or_else(default_app_data_dir);
 
     let mut dialog =
         rfd::FileDialog::new().add_filter("VaultPass Encrypted Vault (.vpass)", &["vpass"]);
@@ -746,14 +900,12 @@ pub fn run() {
     tauri::Builder::default()
         .setup(|app| {
             let (config_path, cfg) = load_or_init_config()?;
-            let windows_hello_available = is_windows_hello_available();
 
             app.manage(AppState {
                 config_path,
                 config: Mutex::new(cfg),
                 unlocked: Mutex::new(None),
                 clipboard_generation: Arc::new(AtomicU64::new(0)),
-                windows_hello_available,
             });
 
             if let Some(window) = app.get_webview_window("main") {
@@ -772,6 +924,8 @@ pub fn run() {
             disable_biometric_unlock,
             lock_vault,
             list_entries,
+            reveal_entry_secret,
+            copy_entry_secret,
             upsert_entry,
             delete_entry,
             toggle_favorite,

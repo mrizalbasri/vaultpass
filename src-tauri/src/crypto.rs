@@ -14,6 +14,15 @@ pub const DEFAULT_MEMORY_KIB: u32 = 65_536; // 64 MiB
 pub const DEFAULT_ITERATIONS: u32 = 3;
 pub const DEFAULT_PARALLELISM: u32 = 4;
 
+pub const MIN_MEMORY_KIB: u32 = 8_192; // 8 MiB floor (preserves v1 test & legacy compatibility)
+pub const MAX_MEMORY_KIB: u32 = 1_048_576; // 1 GiB ceiling against OOM from crafted .vpass files
+pub const MIN_ITERATIONS: u32 = 1;
+pub const MAX_ITERATIONS: u32 = 32;
+pub const MIN_PARALLELISM: u32 = 1;
+pub const MAX_PARALLELISM: u32 = 64;
+pub const MIN_SALT_BYTES: usize = 16;
+pub const MAX_SALT_BYTES: usize = 64;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct KdfParams {
@@ -85,8 +94,17 @@ pub fn derive_key(master_password: &str, kdf: &KdfParams) -> Result<Zeroizing<[u
     let salt = B64
         .decode(&kdf.salt_b64)
         .map_err(|_| "Salt pada file vault tidak valid.".to_string())?;
-    if salt.len() < 16 {
+    if !(MIN_SALT_BYTES..=MAX_SALT_BYTES).contains(&salt.len()) {
         return Err("Panjang salt pada file vault tidak memenuhi standar keamanan.".to_string());
+    }
+    if !(MIN_MEMORY_KIB..=MAX_MEMORY_KIB).contains(&kdf.memory_kib) {
+        return Err("Parameter memori Argon2id di luar batas aman (8 MiB - 1 GiB).".to_string());
+    }
+    if !(MIN_ITERATIONS..=MAX_ITERATIONS).contains(&kdf.iterations) {
+        return Err("Parameter iterasi Argon2id di luar batas aman (1 - 32).".to_string());
+    }
+    if !(MIN_PARALLELISM..=MAX_PARALLELISM).contains(&kdf.parallelism) {
+        return Err("Parameter paralelisme Argon2id di luar batas aman (1 - 64).".to_string());
     }
 
     let params = Params::new(kdf.memory_kib, kdf.iterations, kdf.parallelism, Some(32))
@@ -362,5 +380,32 @@ mod tests {
         for ch in ['0', 'O', 'I', 'l', '1'] {
             assert!(!pw.contains(ch));
         }
+    }
+
+    #[test]
+    fn rejects_out_of_bounds_kdf_parameters() {
+        let base = KdfParams {
+            algorithm: "argon2id".to_string(),
+            memory_kib: 8_192,
+            iterations: 2,
+            parallelism: 1,
+            salt_b64: B64.encode([5u8; 16]),
+        };
+
+        let mut too_small_mem = base.clone();
+        too_small_mem.memory_kib = 1_024;
+        assert!(derive_key("secret-password", &too_small_mem).is_err());
+
+        let mut too_large_mem = base.clone();
+        too_large_mem.memory_kib = MAX_MEMORY_KIB + 1;
+        assert!(derive_key("secret-password", &too_large_mem).is_err());
+
+        let mut too_many_iters = base.clone();
+        too_many_iters.iterations = MAX_ITERATIONS + 1;
+        assert!(derive_key("secret-password", &too_many_iters).is_err());
+
+        let mut too_high_parallelism = base;
+        too_high_parallelism.parallelism = MAX_PARALLELISM + 1;
+        assert!(derive_key("secret-password", &too_high_parallelism).is_err());
     }
 }

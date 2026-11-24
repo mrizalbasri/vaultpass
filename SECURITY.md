@@ -39,7 +39,7 @@ Yang termasuk cakupan:
 
 Di luar cakupan:
 
-- Serangan yang membutuhkan malware atau akses penuh ke komputer yang sudah terbuka (vault dalam keadaan unlocked)
+- Serangan yang membutuhkan malware atau eksekusi kode berbahaya di dalam sesi akun pengguna Windows yang sama (ketika Windows Hello aktif pada aplikasi Win32 *unpackaged*, DPAPI dan Credential Manager memiliki batas kepercayaan yang sama dengan akun pengguna Windows tersebut; `vaultpass-cli` menjaga agar secret tidak terekspos di log chat/terminal dan memerlukan persetujuan interaktif, bukan menggantikan sandbox OS)
 - Kehilangan master password. Master password tidak disimpan dan tidak bisa dipulihkan
 - Kerentanan di dependensi pihak ketiga yang belum ada perbaikannya. Laporkan ke proyek aslinya
 

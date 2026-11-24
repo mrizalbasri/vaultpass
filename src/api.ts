@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
   PasswordGenOptions,
+  UpsertEntryResponse,
   VaultEntry,
   VaultEntryInput,
   VaultStatus,
@@ -36,13 +37,19 @@ export const vaultApi = {
 
   listEntries: () => invoke<VaultEntry[]>("list_entries"),
 
-  upsertEntry: (entry: VaultEntryInput) =>
-    invoke<VaultEntry>("upsert_entry", { entry }),
+  revealEntrySecret: (id: string) =>
+    invoke<string>("reveal_entry_secret", { id }),
 
-  deleteEntry: (id: string) => invoke<void>("delete_entry", { id }),
+  copyEntrySecret: (id: string) =>
+    invoke<number>("copy_entry_secret", { id }),
+
+  upsertEntry: (entry: VaultEntryInput) =>
+    invoke<UpsertEntryResponse>("upsert_entry", { entry }),
+
+  deleteEntry: (id: string) => invoke<VaultEntry[]>("delete_entry", { id }),
 
   toggleFavorite: (id: string) =>
-    invoke<VaultEntry>("toggle_favorite", { id }),
+    invoke<VaultEntry[]>("toggle_favorite", { id }),
 
   changeMasterPassword: (currentPassword: string, newPassword: string) =>
     invoke<void>("change_master_password", { currentPassword, newPassword }),

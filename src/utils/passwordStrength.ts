@@ -32,33 +32,53 @@ export function evaluatePasswordStrength(password: string): PasswordStrengthResu
   }
 
   if (points <= 1) {
-    return {
-      score: 1,
-      label: "Lemah",
-      colorClass: "text-coral",
-      barClass: "bg-coral",
-    };
+    return strengthFromScore(1);
   }
   if (points <= 3) {
-    return {
-      score: 2,
-      label: "Cukup",
-      colorClass: "text-honey",
-      barClass: "bg-honey",
-    };
+    return strengthFromScore(2);
   }
   if (points <= 4) {
-    return {
-      score: 3,
-      label: "Kuat",
-      colorClass: "text-sage",
-      barClass: "bg-sage",
-    };
+    return strengthFromScore(3);
   }
-  return {
-    score: 4,
-    label: "Sangat Kuat",
-    colorClass: "text-sky",
-    barClass: "bg-sky",
-  };
+  return strengthFromScore(4);
+}
+
+export function strengthFromScore(score: number): PasswordStrengthResult {
+  switch (score) {
+    case 0:
+      return {
+        score: 0,
+        label: "Sangat Lemah",
+        colorClass: "text-mute",
+        barClass: "bg-ink-600",
+      };
+    case 1:
+      return {
+        score: 1,
+        label: "Lemah",
+        colorClass: "text-coral",
+        barClass: "bg-coral",
+      };
+    case 2:
+      return {
+        score: 2,
+        label: "Cukup",
+        colorClass: "text-honey",
+        barClass: "bg-honey",
+      };
+    case 3:
+      return {
+        score: 3,
+        label: "Kuat",
+        colorClass: "text-sage",
+        barClass: "bg-sage",
+      };
+    default:
+      return {
+        score: 4,
+        label: "Sangat Kuat",
+        colorClass: "text-sky",
+        barClass: "bg-sky",
+      };
+  }
 }
