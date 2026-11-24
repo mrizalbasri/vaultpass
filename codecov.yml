@@ -2,11 +2,11 @@ coverage:
   status:
     project:
       default:
-        # Informational while GUI window/dialog wrappers remain thin Tauri entrypoints.
-        informational: true
+        target: 75%
+        threshold: 2%
     patch:
       default:
-        informational: true
+        target: 80%
 
 comment:
   layout: "condensed_header, diff, files"
