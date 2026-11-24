@@ -27,12 +27,27 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "publisher": "M. Rizal Basri",
+    "homepage": "https://github.com/mrizalbasri/vaultpass",
+    "copyright": "Copyright © 2026 M. Rizal Basri",
+    "category": "Utility",
+    "shortDescription": "Offline desktop password & API key manager",
+    "longDescription": "Offline desktop password and API key manager built with Tauri and Rust, with Windows Hello and AI Agent CLI support.",
+    "licenseFile": "../LICENSE",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ]
+    ],
+    "windows": {
+      "nsis": {
+        "installerIcon": "icons/icon.ico",
+        "uninstallerIcon": "icons/icon.ico",
+        "installMode": "currentUser",
+        "installerHooks": "windows/hooks.nsh"
+      }
+    }
   }
 }
