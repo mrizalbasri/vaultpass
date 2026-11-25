@@ -7,9 +7,9 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Release tag to publish (e.g. v0.1.0)"
+        description: "Release tag to publish (e.g. v0.1.1)"
         required: true
-        default: "v0.1.0"
+        default: "v0.1.1"
 
 permissions:
   contents: write
@@ -35,7 +35,7 @@ jobs:
       - name: Install frontend dependencies
         run: npm ci
 
-      - name: Build Tauri installers (NSIS + MSI + updater signature + vaultpass-cli sidecar)
+      - name: Build Tauri NSIS installer (+ updater signature + vaultpass-cli sidecar)
         shell: pwsh
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
@@ -44,7 +44,7 @@ jobs:
           $updaterCfg = Join-Path $env:RUNNER_TEMP "tauri.updater.json"
           '{"bundle":{"createUpdaterArtifacts":true}}' | Set-Content -Encoding utf8NoBOM $updaterCfg
           node scripts/prepare-cli-sidecar.mjs
-          npx tauri build --config src-tauri/tauri.bundle.json --config $updaterCfg
+          npx tauri build --bundles nsis --config src-tauri/tauri.bundle.json --config $updaterCfg
 
       - name: Stage release artifacts and SHA256 checksums
         shell: pwsh
@@ -68,7 +68,6 @@ jobs:
           }
           Copy-Item $setupExe.FullName -Destination $outDir
           Copy-Item $setupSig.FullName -Destination $outDir
-          Get-ChildItem "src-tauri/target/release/bundle/msi/*.msi" | Copy-Item -Destination $outDir
 
           $portableStage = Join-Path $PWD "portable-stage"
           New-Item -ItemType Directory -Force $portableStage | Out-Null
@@ -113,8 +112,8 @@ jobs:
           body: |
             ### Unduhan Windows (64-bit)
             - **`*-setup.exe` (Direkomendasikan):** Installer standar Windows (membuat shortcut di Desktop & Start Menu, sudah termasuk `vaultpass-cli.exe`).
-            - **`*.msi`:** Paket Windows Installer alternatif.
             - **`*_portable.zip`:** Versi portable tanpa instalasi (`vaultpass.exe` + `vaultpass-cli.exe`).
+            - **`latest.json` & `*.sig`:** Manifes tanda tangan digital Ed25519 untuk fitur *In-App Auto-Update*.
             - **`SHA256SUMS.txt`:** Checksum SHA-256 untuk memverifikasi keaslian file.
 
             > **Catatan Windows SmartScreen:** Aplikasi ini open-source dan belum menggunakan sertifikat *code-signing* berbayar. Jika muncul peringatan *"Windows protected your PC"* saat pertama kali membuka installer, klik **More info** lalu **Run anyway**.

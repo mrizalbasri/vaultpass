@@ -119,7 +119,7 @@ npm install
 npm run tauri:dev
 ```
 
-Membangun installer (otomatis ikut memaketkan `vaultpass-cli.exe` ke dalam installer `.msi` & `-setup.exe`):
+Membangun installer (otomatis ikut memaketkan `vaultpass-cli.exe` ke dalam installer `-setup.exe`):
 
 ```bash
 npm run tauri:build
@@ -162,7 +162,7 @@ vaultpass/
 
 ## Status dan rencana
 
-Sudah ada: enkripsi vault, Windows Hello, CLI untuk AI Agent, form dinamis per kategori, jeda *cooldown* percobaan password, auto-lock dengan peringatan, backup terenkripsi, installer Windows (`-setup.exe`, `.msi`, `install.ps1`), dan CI dengan coverage.
+Sudah ada: enkripsi vault, Windows Hello, CLI untuk AI Agent, form dinamis per kategori, jeda *cooldown* percobaan password, auto-lock dengan peringatan, backup terenkripsi, installer Windows (`-setup.exe`, `install.ps1`), dan CI dengan coverage.
 
 Belum ada:
 - Sertifikat *code-signing* Windows (agar bebas peringatan SmartScreen)
