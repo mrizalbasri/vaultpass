@@ -14,7 +14,6 @@ import {
   ShieldCheck,
 } from "lucide-react";
 import { evaluatePasswordStrength } from "../utils/passwordStrength";
-import { Grain } from "./Grain";
 import { VaultLogo } from "./VaultLogo";
 import { VaultMascot, type MascotMood } from "./VaultMascot";
 
@@ -145,19 +144,17 @@ export function LockScreen({
   const busy = loading || bioLoading;
 
   return (
-    <div className="relative flex h-screen overflow-hidden bg-ink-950 text-cream-soft">
+    <div className="relative flex h-full w-full overflow-clip bg-ink-950 text-cream-soft">
       {/* Brand side */}
-      <section className="relative hidden flex-1 items-center justify-center overflow-hidden md:flex">
+      <section className="relative hidden flex-1 items-center justify-center overflow-hidden bg-ink-950 md:flex">
         <div
           aria-hidden
-          className="absolute inset-0"
+          className="pointer-events-none absolute inset-0"
           style={{
             background:
-              "radial-gradient(ellipse 60% 55% at 50% 46%, rgb(233 180 76 / 0.13), transparent 70%)",
+              "radial-gradient(circle 360px at 50% 42%, rgb(45 58 89 / 0.28), transparent 75%)",
           }}
         />
-        <div aria-hidden className="dial-rings absolute inset-0" />
-        <Grain opacity={0.09} />
 
         <div className="relative z-10 flex flex-col items-center px-10 text-center">
           <div className="relative animate-fade-up">
@@ -201,7 +198,7 @@ export function LockScreen({
       </section>
 
       {/* Form side */}
-      <section className="relative flex w-full shrink-0 overflow-y-auto border-ink-700 bg-ink-900 md:w-[460px] md:border-l">
+      <section className="relative flex w-full shrink-0 overflow-x-hidden overflow-y-auto overscroll-none border-ink-700 bg-ink-900 md:w-[460px] md:border-l">
         <div className="m-auto w-full max-w-sm px-7 py-9">
           <div className="mb-7 animate-fade-up">
             <VaultLogo size={46} mood={mood} className="mb-5 md:hidden" />
@@ -380,7 +377,7 @@ export function LockScreen({
             <button
               type="submit"
               disabled={busy}
-              className="flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-cream text-sm font-semibold text-ink-950 shadow-[0_8px_24px_-8px_rgb(243_233_198/0.45)] transition hover:bg-[#fff5d2] active:translate-y-px disabled:cursor-not-allowed disabled:opacity-60"
+              className="flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-honey text-sm font-semibold text-ink-950 shadow-[0_8px_24px_-8px_rgb(245_183_59/0.45)] transition hover:bg-[#f8c65a] active:translate-y-px disabled:cursor-not-allowed disabled:opacity-60"
             >
               {loading && <Loader2 className="h-4 w-4 animate-spin" />}
               {loading

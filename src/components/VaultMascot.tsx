@@ -1,8 +1,8 @@
 export type MascotMood = "sleeping" | "awake" | "shocked" | "happy";
 
-const BODY = "#f3e9c6";
-const INK = "#1a1812";
-const BLUSH = "#e9b44c";
+const BODY = "#f5f2e8";
+const INK = "#141720";
+const BLUSH = "#f5b73b";
 
 const fade = (visible: boolean) => ({
   opacity: visible ? 1 : 0,

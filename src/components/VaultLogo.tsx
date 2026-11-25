@@ -27,8 +27,8 @@ export function VaultLogo({ size = 40, className = "", mood = "awake" }: VaultLo
     >
       <defs>
         <linearGradient id={base} x1="64" y1="4" x2="64" y2="124" gradientUnits="userSpaceOnUse">
-          <stop offset="0" stopColor="#3b372e" />
-          <stop offset="1" stopColor="#14120e" />
+          <stop offset="0" stopColor="#2a3142" />
+          <stop offset="1" stopColor="#12151e" />
         </linearGradient>
         <linearGradient id={edge} x1="64" y1="4" x2="64" y2="124" gradientUnits="userSpaceOnUse">
           <stop offset="0" stopColor="#ffffff" stopOpacity="0.34" />
@@ -43,8 +43,8 @@ export function VaultLogo({ size = 40, className = "", mood = "awake" }: VaultLo
           gradientUnits="userSpaceOnUse"
           gradientTransform="translate(48 10) rotate(60) scale(84 110)"
         >
-          <stop offset="0" stopColor="#f3e9c6" stopOpacity="0.2" />
-          <stop offset="1" stopColor="#f3e9c6" stopOpacity="0" />
+          <stop offset="0" stopColor="#f5b73b" stopOpacity="0.2" />
+          <stop offset="1" stopColor="#f5b73b" stopOpacity="0" />
         </radialGradient>
       </defs>
 

@@ -18,6 +18,17 @@ use zeroize::{Zeroize, Zeroizing};
 const DPAPI_ENTROPY_PREFIX: &[u8] = b"VaultPass-WindowsHello-DPAPI-v2:";
 const CRED_TARGET_NAME: &str = "VaultPass:BiometricEntropy:v2";
 const CRYPTPROTECT_UI_FORBIDDEN: u32 = 0x1;
+const CREDUIWIN_GENERIC: u32 = 0x1;
+const ERROR_CANCELLED_WIN32: u32 = 1223;
+
+#[repr(C)]
+struct CredUiInfoW {
+    cb_size: u32,
+    hwnd_parent: *mut c_void,
+    psz_message_text: *const u16,
+    psz_caption_text: *const u16,
+    hbm_banner: *mut c_void,
+}
 
 #[repr(C)]
 struct DataBlob {
@@ -56,6 +67,46 @@ extern "system" {
 #[link(name = "user32")]
 extern "system" {
     fn GetForegroundWindow() -> *mut c_void;
+}
+
+#[link(name = "credui")]
+extern "system" {
+    fn CredPackAuthenticationBufferW(
+        dw_flags: u32,
+        psz_user_name: *const u16,
+        psz_password: *const u16,
+        p_packed_credentials: *mut u8,
+        pcb_packed_credentials: *mut u32,
+    ) -> i32;
+
+    fn CredUIPromptForWindowsCredentialsW(
+        p_ui_info: *const CredUiInfoW,
+        dw_auth_error: u32,
+        pul_auth_package: *mut u32,
+        pv_in_auth_buffer: *const c_void,
+        ul_in_auth_buffer_size: u32,
+        ppv_out_auth_buffer: *mut *mut c_void,
+        pul_out_auth_buffer_size: *mut u32,
+        pf_save: *mut i32,
+        dw_flags: u32,
+    ) -> u32;
+
+    fn CredUnPackAuthenticationBufferW(
+        dw_flags: u32,
+        p_auth_buffer: *const c_void,
+        cb_auth_buffer: u32,
+        psz_user_name: *mut u16,
+        pcch_max_user_name: *mut u32,
+        psz_domain_name: *mut u16,
+        pcch_max_domain_name: *mut u32,
+        psz_password: *mut u16,
+        pcch_max_password: *mut u32,
+    ) -> i32;
+}
+
+#[link(name = "ole32")]
+extern "system" {
+    fn CoTaskMemFree(pv: *const c_void);
 }
 
 pub fn foreground_window_hwnd() -> Option<isize> {
@@ -388,6 +439,195 @@ pub fn request_windows_hello_verification(
     map_verification_result(hello_result)
 }
 
+fn pack_cred_auth_buffer(username: &str, password: &str) -> Result<Zeroizing<Vec<u8>>, String> {
+    let user_w = to_wide_null(username);
+    let pass_w = Zeroizing::new(to_wide_null(password));
+    let mut size: u32 = 0;
+
+    unsafe {
+        let _ = CredPackAuthenticationBufferW(
+            0,
+            user_w.as_ptr(),
+            pass_w.as_ptr(),
+            ptr::null_mut(),
+            &mut size,
+        );
+    }
+    if size == 0 {
+        return Err("Gagal menyiapkan buffer autentikasi Windows.".to_string());
+    }
+
+    let mut buf = Zeroizing::new(vec![0u8; size as usize]);
+    let ok = unsafe {
+        CredPackAuthenticationBufferW(
+            0,
+            user_w.as_ptr(),
+            pass_w.as_ptr(),
+            buf.as_mut_ptr(),
+            &mut size,
+        )
+    };
+    if ok == 0 {
+        return Err("Gagal mengenkode buffer autentikasi Windows.".to_string());
+    }
+    buf.truncate(size as usize);
+    Ok(buf)
+}
+
+fn unpack_cred_auth_password(auth_buf: &[u8]) -> Result<Zeroizing<String>, String> {
+    let mut user_len: u32 = 0;
+    let mut domain_len: u32 = 0;
+    let mut pass_len: u32 = 0;
+
+    unsafe {
+        let _ = CredUnPackAuthenticationBufferW(
+            0,
+            auth_buf.as_ptr() as *const c_void,
+            auth_buf.len() as u32,
+            ptr::null_mut(),
+            &mut user_len,
+            ptr::null_mut(),
+            &mut domain_len,
+            ptr::null_mut(),
+            &mut pass_len,
+        );
+    }
+
+    let mut user_buf = vec![0u16; user_len.max(1) as usize];
+    let mut domain_buf = vec![0u16; domain_len.max(1) as usize];
+    let mut pass_buf = Zeroizing::new(vec![0u16; pass_len.max(1) as usize]);
+
+    let ok = unsafe {
+        CredUnPackAuthenticationBufferW(
+            0,
+            auth_buf.as_ptr() as *const c_void,
+            auth_buf.len() as u32,
+            user_buf.as_mut_ptr(),
+            &mut user_len,
+            domain_buf.as_mut_ptr(),
+            &mut domain_len,
+            pass_buf.as_mut_ptr(),
+            &mut pass_len,
+        )
+    };
+    if ok == 0 {
+        return Err("Gagal membaca hasil input kredensial Windows.".to_string());
+    }
+
+    let end = pass_buf
+        .iter()
+        .position(|&c| c == 0)
+        .unwrap_or(pass_buf.len());
+    Ok(Zeroizing::new(String::from_utf16_lossy(&pass_buf[..end])))
+}
+
+fn format_master_password_prompt(prompt_message: &str) -> String {
+    let cleaned_msg: String = prompt_message
+        .chars()
+        .filter(|c| !c.is_control() || *c == '\n')
+        .take(240)
+        .collect();
+    format!("{cleaned_msg}\n\nMasukkan Master Password VaultPass untuk menyetujui akses ini:")
+}
+
+fn copy_and_wipe_auth_slice(status: u32, slice: &mut [u8]) -> Option<Zeroizing<Vec<u8>>> {
+    let copied = (status == 0).then(|| Zeroizing::new(slice.to_vec()));
+    slice.zeroize();
+    copied
+}
+
+fn invoke_credui_dialog(
+    parent_hwnd: Option<isize>,
+    caption_w: &[u16],
+    msg_w: &[u16],
+    in_buf: &[u8],
+) -> (u32, Option<Zeroizing<Vec<u8>>>) {
+    let ui_info = CredUiInfoW {
+        cb_size: std::mem::size_of::<CredUiInfoW>() as u32,
+        hwnd_parent: parent_hwnd
+            .map(|h| h as *mut c_void)
+            .unwrap_or(ptr::null_mut()),
+        psz_message_text: msg_w.as_ptr(),
+        psz_caption_text: caption_w.as_ptr(),
+        hbm_banner: ptr::null_mut(),
+    };
+
+    let mut auth_package: u32 = 0;
+    let mut out_buf: *mut c_void = ptr::null_mut();
+    let mut out_size: u32 = 0;
+    let mut save: i32 = 0;
+
+    let status = unsafe {
+        CredUIPromptForWindowsCredentialsW(
+            &ui_info,
+            0,
+            &mut auth_package,
+            in_buf.as_ptr() as *const c_void,
+            in_buf.len() as u32,
+            &mut out_buf,
+            &mut out_size,
+            &mut save,
+            CREDUIWIN_GENERIC,
+        )
+    };
+
+    let buf = if !out_buf.is_null() {
+        unsafe {
+            let slice = std::slice::from_raw_parts_mut(out_buf as *mut u8, out_size as usize);
+            let copied = copy_and_wipe_auth_slice(status, slice);
+            CoTaskMemFree(out_buf);
+            copied
+        }
+    } else {
+        None
+    };
+
+    (status, buf)
+}
+
+fn prompt_windows_master_password_with<F>(
+    prompt_message: &str,
+    owner_hwnd: Option<isize>,
+    run_dialog: F,
+) -> Result<Zeroizing<String>, String>
+where
+    F: FnOnce(Option<isize>, &[u16], &[u16], &[u8]) -> (u32, Option<Zeroizing<Vec<u8>>>),
+{
+    let full_msg = format_master_password_prompt(prompt_message);
+    let caption_w = to_wide_null("VaultPass — Izin Akses AI Agent (CLI)");
+    let msg_w = to_wide_null(&full_msg);
+    let in_buf = pack_cred_auth_buffer("VaultPass", "")?;
+    let resolved_hwnd = owner_hwnd
+        .or_else(foreground_window_hwnd)
+        .filter(|&h| h != 0);
+
+    let (status, out_buf) = run_dialog(resolved_hwnd, &caption_w, &msg_w, &in_buf);
+
+    if status == ERROR_CANCELLED_WIN32 {
+        return Err("Verifikasi Master Password dibatalkan.".to_string());
+    }
+    let Some(out_bytes) = (status == 0).then_some(out_buf).flatten() else {
+        return Err(format!(
+            "Gagal memverifikasi lewat dialog Keamanan Windows (kode {status})."
+        ));
+    };
+
+    let password = unpack_cred_auth_password(&out_bytes)?;
+    if password.is_empty() {
+        return Err("Master Password tidak boleh kosong.".to_string());
+    }
+    Ok(password)
+}
+
+/// Prompts the user via the native Windows Security dialog (`CredUIPromptForWindowsCredentialsW`)
+/// to enter their VaultPass Master Password when Windows Hello is unavailable or disabled.
+pub fn prompt_windows_master_password(
+    prompt_message: &str,
+    owner_hwnd: Option<isize>,
+) -> Result<Zeroizing<String>, String> {
+    prompt_windows_master_password_with(prompt_message, owner_hwnd, invoke_credui_dialog)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -474,5 +714,74 @@ mod tests {
         if !is_windows_hello_available() {
             assert!(request_windows_hello_verification("Uji", None).is_err());
         }
+    }
+
+    #[test]
+    fn credui_pack_and_unpack_password_roundtrip() {
+        let packed = pack_cred_auth_buffer("VaultPass", "MasterSecret#2026!").unwrap();
+        let unpacked = unpack_cred_auth_password(&packed).unwrap();
+        assert_eq!(unpacked.as_str(), "MasterSecret#2026!");
+    }
+
+    #[test]
+    fn prompt_windows_master_password_handles_success_cancel_and_errors() {
+        let long_msg = format!("Akses\r\x07 {}", "x".repeat(260));
+        let ok = prompt_windows_master_password_with(
+            &long_msg,
+            Some(0x1234),
+            |hwnd, cap, msg, in_buf| {
+                assert_eq!(hwnd, Some(0x1234));
+                assert!(!cap.is_empty());
+                assert!(!in_buf.is_empty());
+                let decoded_msg = String::from_utf16_lossy(&msg[..msg.len() - 1]);
+                assert!(!decoded_msg.contains('\r'));
+                assert!(!decoded_msg.contains('\x07'));
+                assert!(decoded_msg.contains("Masukkan Master Password VaultPass"));
+                let packed = pack_cred_auth_buffer("VaultPass", "SecretPass#99").unwrap();
+                (0, Some(packed))
+            },
+        )
+        .unwrap();
+        assert_eq!(ok.as_str(), "SecretPass#99");
+
+        let canceled = prompt_windows_master_password_with("Uji", None, |_, _, _, _| {
+            (ERROR_CANCELLED_WIN32, None)
+        })
+        .unwrap_err();
+        assert!(canceled.contains("dibatalkan"));
+
+        let failed_status =
+            prompt_windows_master_password_with("Uji", None, |_, _, _, _| (31, None)).unwrap_err();
+        assert!(failed_status.contains("kode 31"));
+
+        let missing_buf =
+            prompt_windows_master_password_with("Uji", None, |_, _, _, _| (0, None)).unwrap_err();
+        assert!(missing_buf.contains("kode 0"));
+
+        let corrupted = prompt_windows_master_password_with("Uji", None, |_, _, _, _| {
+            (0, Some(Zeroizing::new(vec![0xFF, 0x00, 0xAA])))
+        })
+        .unwrap_err();
+        assert!(corrupted.contains("Gagal membaca"));
+
+        let empty_pw = prompt_windows_master_password_with("Uji", None, |_, _, _, _| {
+            let packed = pack_cred_auth_buffer("VaultPass", "").unwrap();
+            (0, Some(packed))
+        })
+        .unwrap_err();
+        assert_eq!(empty_pw, "Master Password tidak boleh kosong.");
+
+        let mut sample_ok = vec![1u8, 2, 3, 4];
+        assert_eq!(
+            copy_and_wipe_auth_slice(0, &mut sample_ok)
+                .unwrap()
+                .as_slice(),
+            &[1u8, 2, 3, 4]
+        );
+        assert_eq!(sample_ok, vec![0u8, 0, 0, 0]);
+
+        let mut sample_err = vec![9u8, 8, 7];
+        assert!(copy_and_wipe_auth_slice(ERROR_CANCELLED_WIN32, &mut sample_err).is_none());
+        assert_eq!(sample_err, vec![0u8, 0, 0]);
     }
 }

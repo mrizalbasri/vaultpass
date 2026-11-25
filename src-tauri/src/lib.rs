@@ -1051,6 +1051,7 @@ pub fn run() {
             app.manage(AppState::new(config_path, cfg));
 
             if let Some(window) = app.get_webview_window("main") {
+                let _ = window.set_zoom(1.0);
                 let _ = window.show();
                 let _ = window.set_focus();
             }

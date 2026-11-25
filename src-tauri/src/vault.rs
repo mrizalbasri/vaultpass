@@ -236,6 +236,29 @@ pub fn evaluate_password_strength_score(password: &str) -> u8 {
     }
 }
 
+fn is_sequential_ascii_digits(bytes: &[u8]) -> bool {
+    bytes.len() >= 2
+        && (bytes.windows(2).all(|w| w[1] == w[0].wrapping_add(1))
+            || bytes.windows(2).all(|w| w[0] == w[1].wrapping_add(1)))
+}
+
+/// Evaluates password/PIN strength for a vault entry, scoring non-trivial 6–8 digit
+/// numeric PINs in the `Finance` category as strong (`3`) instead of flagging them as weak.
+pub fn evaluate_entry_strength_score(password: &str, category: &str) -> u8 {
+    if category == "Finance"
+        && (6..=8).contains(&password.len())
+        && password.bytes().all(|b| b.is_ascii_digit())
+    {
+        let bytes = password.as_bytes();
+        if bytes.iter().all(|&b| b == bytes[0]) || is_sequential_ascii_digits(bytes) {
+            return 1;
+        }
+        return 3;
+    }
+
+    evaluate_password_strength_score(password)
+}
+
 pub fn summarize_entries(entries: &[VaultEntry]) -> Vec<VaultEntrySummary> {
     entries
         .iter()
@@ -256,7 +279,7 @@ pub fn summarize_entries(entries: &[VaultEntry]) -> Vec<VaultEntrySummary> {
                 notes: entry.notes.clone(),
                 favorite: entry.favorite,
                 password_length: entry.password.chars().count(),
-                strength_score: evaluate_password_strength_score(&entry.password),
+                strength_score: evaluate_entry_strength_score(&entry.password, &entry.category),
                 reused_count,
                 created_at: entry.created_at.clone(),
                 updated_at: entry.updated_at.clone(),
@@ -554,6 +577,29 @@ mod tests {
         assert_eq!(evaluate_password_strength_score("aaaaaaaaaaaa"), 1);
         assert_eq!(evaluate_password_strength_score("Abcd1234"), 2);
         assert_eq!(evaluate_password_strength_score("Abcd12345678"), 3);
+
+        assert_eq!(evaluate_entry_strength_score("482917", "Finance"), 3);
+        assert_eq!(evaluate_entry_strength_score("48291705", "Finance"), 3);
+        assert_eq!(evaluate_entry_strength_score("123456", "Finance"), 1);
+        assert_eq!(evaluate_entry_strength_score("654321", "Finance"), 1);
+        assert_eq!(evaluate_entry_strength_score("000000", "Finance"), 1);
+        assert_eq!(evaluate_entry_strength_score("4829", "Finance"), 1);
+        assert_eq!(evaluate_entry_strength_score("482917", "Login"), 1);
+
+        let finance_summaries = summarize_entries(&[VaultEntry {
+            id: "fin-1".to_string(),
+            title: "BCA".to_string(),
+            username: "1234567890".to_string(),
+            password: "482917".to_string(),
+            url: "".to_string(),
+            category: "Finance".to_string(),
+            env_var_name: "".to_string(),
+            notes: "".to_string(),
+            favorite: false,
+            created_at: now_iso(),
+            updated_at: now_iso(),
+        }]);
+        assert_eq!(finance_summaries[0].strength_score, 3);
 
         assert_eq!(normalize_hint(Some("   \n\t  ".to_string())), None);
         let long_hint = format!("petunjuk\n{}", "x".repeat(250));

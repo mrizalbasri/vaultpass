@@ -138,7 +138,7 @@ export function SessionTimer({ minutes, onLock }: SessionTimerProps) {
           <button
             type="button"
             onClick={extend}
-            className="shrink-0 rounded-xl bg-cream px-3.5 py-2 text-xs font-semibold text-ink-950 transition hover:bg-[#fff5d2] active:translate-y-px"
+            className="shrink-0 rounded-xl bg-honey px-3.5 py-2 text-xs font-semibold text-ink-950 transition hover:bg-[#f8c65a] active:translate-y-px"
           >
             Tetap aktif
           </button>

@@ -22,7 +22,6 @@ import {
 } from "lucide-react";
 import { vaultApi } from "./api";
 import { EntryFormModal } from "./components/EntryFormModal";
-import { Grain } from "./components/Grain";
 import { LockScreen } from "./components/LockScreen";
 import { PasswordGeneratorModal } from "./components/PasswordGeneratorModal";
 import { SessionTimer } from "./components/SessionTimer";
@@ -36,6 +35,7 @@ import {
   type VaultEntryInput,
   type VaultStatus,
 } from "./types";
+import { CATEGORY_FORM_CONFIG } from "./utils/categoryConfig";
 import { strengthFromScore } from "./utils/passwordStrength";
 
 type SidebarFilter = "all" | "favorites" | "weak" | EntryCategory;
@@ -146,6 +146,7 @@ export function App() {
   const [revealedSecret, setRevealedSecret] = useState<string | null>(null);
 
   const [formOpen, setFormOpen] = useState(false);
+  const [formDefaultCategory, setFormDefaultCategory] = useState<EntryCategory>("Login");
   const [editingEntry, setEditingEntry] = useState<VaultEntry | null>(null);
   const [generatorOpen, setGeneratorOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -211,12 +212,17 @@ export function App() {
       } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "n") {
         e.preventDefault();
         setEditingEntry(null);
+        setFormDefaultCategory(
+          ENTRY_CATEGORIES.includes(filter as EntryCategory)
+            ? (filter as EntryCategory)
+            : "Login"
+        );
         setFormOpen(true);
       }
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [status?.unlocked, handleLockVault]);
+  }, [status?.unlocked, handleLockVault, filter]);
 
   useEffect(() => {
     if (clipboardCountdown <= 0) return;
@@ -264,6 +270,30 @@ export function App() {
     () => entries.find((e) => e.id === selectedId) ?? filteredEntries[0] ?? null,
     [entries, selectedId, filteredEntries]
   );
+
+  useEffect(() => {
+    if (!status) {
+      document.title = "VaultPass";
+      return;
+    }
+    if (!status.exists) {
+      document.title = "Buat Vault · VaultPass";
+      return;
+    }
+    if (!status.unlocked) {
+      document.title = "Terkunci · VaultPass";
+      return;
+    }
+    if (filter === "all") {
+      document.title = "VaultPass";
+    } else if (filter === "favorites") {
+      document.title = "Favorit · VaultPass";
+    } else if (filter === "weak") {
+      document.title = "Perlu Perhatian · VaultPass";
+    } else {
+      document.title = `${filter} · VaultPass`;
+    }
+  }, [status, filter]);
 
   useEffect(() => {
     setShowDetailPassword(false);
@@ -380,7 +410,7 @@ export function App() {
 
   if (!status) {
     return (
-      <div className="flex h-screen flex-col items-center justify-center gap-4 bg-ink-950 text-sm text-mute">
+      <div className="flex h-full w-full flex-col items-center justify-center gap-4 overflow-clip bg-ink-950 text-sm text-mute">
         <VaultMascot mood="sleeping" size={96} floating />
         Memuat VaultPass...
       </div>
@@ -389,7 +419,7 @@ export function App() {
 
   if (!status.exists || !status.unlocked) {
     return (
-      <div className="h-screen animate-fade-in">
+      <div className="h-full w-full animate-fade-in overflow-clip">
         <LockScreen
           vaultExists={status.exists}
           vaultPath={status.vaultPath}
@@ -438,11 +468,14 @@ export function App() {
 
   const favoriteCount = entries.filter((e) => e.favorite).length;
   const selectedStyle = selectedEntry ? CATEGORY_STYLE[selectedEntry.category] : null;
+  const selectedCategoryMeta = selectedEntry
+    ? CATEGORY_FORM_CONFIG[selectedEntry.category]
+    : null;
 
   return (
-    <div className="flex h-screen animate-fade-in overflow-hidden bg-ink-950 text-cream-soft">
+    <div className="flex h-full w-full animate-fade-in overflow-clip bg-ink-950 text-cream-soft">
       {/* Sidebar */}
-      <aside className="flex w-64 shrink-0 flex-col border-r border-ink-700/80 bg-ink-900">
+      <aside className="flex w-56 shrink-0 flex-col border-r border-ink-700/80 bg-ink-900 xl:w-60">
         <div className="flex items-center gap-3 px-4 pt-4 pb-3.5">
           <VaultLogo size={38} className="shrink-0" />
           <div className="min-w-0">
@@ -453,7 +486,7 @@ export function App() {
           </div>
         </div>
 
-        <div className="flex-1 space-y-6 overflow-y-auto px-3 py-2">
+        <div className="flex-1 space-y-6 overflow-y-auto overscroll-none px-3 py-2">
           <div className="space-y-0.5">
             <NavButton
               active={filter === "all"}
@@ -548,7 +581,7 @@ export function App() {
       </aside>
 
       {/* Account List Pane */}
-      <section className="flex w-[21rem] shrink-0 flex-col border-r border-ink-700/80 bg-ink-950">
+      <section className="flex w-72 shrink-0 flex-col border-r border-ink-700/80 bg-[#10131b] xl:w-80">
         <div className="flex items-center gap-2 border-b border-ink-700/80 p-3">
           <div className="relative flex-1">
             <Search className="pointer-events-none absolute top-1/2 left-3 h-3.5 w-3.5 -translate-y-1/2 text-faint" />
@@ -569,17 +602,22 @@ export function App() {
             type="button"
             onClick={() => {
               setEditingEntry(null);
+              setFormDefaultCategory(
+                ENTRY_CATEGORIES.includes(filter as EntryCategory)
+                  ? (filter as EntryCategory)
+                  : "Login"
+              );
               setFormOpen(true);
             }}
-            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-cream text-ink-950 transition hover:bg-[#fff5d2] active:translate-y-px"
-            title="Tambah Akun / API Key (Ctrl+N)"
+            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-honey text-ink-950 shadow-[0_6px_16px_-6px_rgb(245_183_59/0.5)] transition hover:bg-[#f8c65a] active:translate-y-px"
+            title="Tambah Item Baru (Ctrl+N)"
             aria-label="Tambah akun atau API key"
           >
-            <Plus className="h-4 w-4" />
+            <Plus className="h-4 w-4 stroke-[2.4]" />
           </button>
         </div>
 
-        <div className="flex-1 overflow-y-auto p-2">
+        <div className="flex-1 overflow-y-auto overscroll-none p-2">
           {filteredEntries.length === 0 ? (
             <div className="flex h-full animate-fade-up flex-col items-center justify-center px-6 text-center">
               <VaultMascot mood={entries.length === 0 ? "sleeping" : "shocked"} size={104} />
@@ -645,13 +683,13 @@ export function App() {
       </section>
 
       {/* Main Detail Pane */}
-      <main className="relative flex flex-1 flex-col overflow-y-auto bg-ink-950">
+      <main className="relative flex min-w-0 flex-1 flex-col overflow-x-hidden overflow-y-auto overscroll-none bg-ink-950">
         <div
           aria-hidden
           className="pointer-events-none absolute inset-x-0 top-0 h-72"
           style={{
             background:
-              "radial-gradient(ellipse 60% 100% at 50% 0%, rgb(233 180 76 / 0.06), transparent 70%)",
+              "radial-gradient(ellipse 60% 100% at 50% 0%, rgb(45 58 89 / 0.2), transparent 70%)",
           }}
         />
         {clipboardCountdown > 0 && (
@@ -663,17 +701,20 @@ export function App() {
           </div>
         )}
 
-        {selectedEntry && selectedStyle ? (
+        {selectedEntry && selectedStyle && selectedCategoryMeta ? (
           <div key={selectedEntry.id} className="relative mx-auto w-full max-w-2xl animate-fade-up p-8">
             <div className="flex items-start justify-between gap-4 border-b border-ink-700/80 pb-6">
-              <div className="flex items-center gap-4">
+              <div className="flex min-w-0 items-center gap-4">
                 <div
-                  className={`flex h-14 w-14 items-center justify-center rounded-2xl font-display text-2xl font-semibold ${selectedStyle.avatar}`}
+                  className={`flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl font-display text-2xl font-semibold ${selectedStyle.avatar}`}
                 >
                   {selectedEntry.title.trim().charAt(0).toUpperCase() || "?"}
                 </div>
-                <div>
-                  <h1 className="font-display text-2xl leading-tight font-semibold tracking-tight text-cream">
+                <div className="min-w-0">
+                  <h1
+                    data-selectable
+                    className="truncate font-display text-2xl leading-tight font-semibold tracking-tight text-cream"
+                  >
                     {selectedEntry.title}
                   </h1>
                   <div className="mt-1.5 flex flex-wrap items-center gap-2">
@@ -746,17 +787,18 @@ export function App() {
             </div>
 
             <div className="mt-6 space-y-3.5">
-              {/* Username / Email / Project ID */}
+              {/* Username / Email / Account / Project ID */}
               {selectedEntry.username && (
-                <FieldCard
-                  label={
-                    selectedEntry.category === "API Key"
-                      ? "Account / Project ID"
-                      : "Email / Username"
-                  }
-                >
+                <FieldCard label={selectedCategoryMeta.detailUsernameLabel}>
                   <div className="flex items-center justify-between gap-3">
-                    <span className="text-sm break-all text-cream">{selectedEntry.username}</span>
+                    <span
+                      data-selectable
+                      className={`text-sm break-all text-cream ${
+                        selectedCategoryMeta.usernameMono ? "font-mono" : ""
+                      }`}
+                    >
+                      {selectedEntry.username}
+                    </span>
                     <button
                       type="button"
                       onClick={() => void handleCopy(selectedEntry.username, false, "username")}
@@ -773,13 +815,9 @@ export function App() {
                 </FieldCard>
               )}
 
-              {/* Password / API Secret Key */}
+              {/* Password / PIN / API Secret Key */}
               <FieldCard
-                label={
-                  selectedEntry.category === "API Key"
-                    ? "Secret / API Key (tersimpan permanen)"
-                    : "Password"
-                }
+                label={selectedCategoryMeta.detailSecretLabel}
                 right={
                   detailStrength && (
                     <span className={`text-[11px] font-medium ${detailStrength.colorClass}`}>
@@ -811,14 +849,14 @@ export function App() {
                     <button
                       type="button"
                       onClick={() => void handleCopyEntrySecret(selectedEntry.id)}
-                      className="inline-flex items-center gap-1.5 rounded-lg bg-cream px-2.5 py-1.5 text-xs font-semibold text-ink-950 transition hover:bg-[#fff5d2] active:translate-y-px"
+                      className="inline-flex items-center gap-1.5 rounded-lg bg-honey px-3 py-1.5 text-xs font-semibold text-ink-950 transition hover:bg-[#f8c65a] active:translate-y-px"
                     >
                       {copiedField === "password" ? (
                         <Check className="h-3.5 w-3.5" />
                       ) : (
                         <Copy className="h-3.5 w-3.5" />
                       )}
-                      {selectedEntry.category === "API Key" ? "Salin Key" : "Salin Password"}
+                      {selectedCategoryMeta.detailCopySecretLabel}
                     </button>
                   </div>
                 </div>
@@ -851,7 +889,9 @@ export function App() {
                       Akses & Validasi Key untuk AI Agent (CLI)
                     </div>
                     <span className="shrink-0 text-[11px] text-mute">
-                      Dijaga Windows Hello
+                      {status.biometricEnabled
+                        ? "Dijaga Windows Hello"
+                        : "Dijaga Dialog Keamanan Windows"}
                     </span>
                   </div>
                   <p className="mb-3 text-xs leading-relaxed text-mute">
@@ -912,11 +952,13 @@ export function App() {
 
               {/* URL */}
               {selectedEntry.url && (
-                <FieldCard label="Website / Endpoint">
+                <FieldCard label={selectedCategoryMeta.detailUrlLabel}>
                   <div className="flex items-center justify-between gap-3">
                     <span className="flex min-w-0 items-center gap-2 text-sm text-honey">
                       <Globe className="h-4 w-4 shrink-0 text-faint" />
-                      <span className="truncate">{selectedEntry.url}</span>
+                      <span data-selectable className="truncate">
+                        {selectedEntry.url}
+                      </span>
                     </span>
                     <button
                       type="button"
@@ -933,7 +975,10 @@ export function App() {
               {/* Notes */}
               {selectedEntry.notes && (
                 <FieldCard label="Catatan">
-                  <p className="text-sm leading-relaxed whitespace-pre-wrap text-cream-soft">
+                  <p
+                    data-selectable
+                    className="text-sm leading-relaxed whitespace-pre-wrap text-cream-soft"
+                  >
                     {selectedEntry.notes}
                   </p>
                 </FieldCard>
@@ -941,9 +986,15 @@ export function App() {
             </div>
           </div>
         ) : (
-          <div className="relative flex flex-1 flex-col items-center justify-center overflow-hidden p-8 text-center">
-            <div aria-hidden className="dial-rings absolute inset-0" />
-            <Grain opacity={0.06} />
+          <div className="relative flex flex-1 flex-col items-center justify-center overflow-clip p-8 text-center">
+            <div
+              aria-hidden
+              className="pointer-events-none absolute inset-0"
+              style={{
+                background:
+                  "radial-gradient(circle 320px at 50% 45%, rgb(45 58 89 / 0.24), transparent 75%)",
+              }}
+            />
             <div className="relative z-10 flex flex-col items-center animate-fade-up">
               <VaultMascot mood="awake" size={150} floating />
               <h2 className="mt-5 font-display text-xl font-semibold text-cream">
@@ -958,10 +1009,10 @@ export function App() {
                   type="button"
                   onClick={() => {
                     setEditingEntry(null);
-                    setFilter("Login");
+                    setFormDefaultCategory("Login");
                     setFormOpen(true);
                   }}
-                  className="inline-flex items-center gap-2 rounded-xl bg-cream px-4 py-2.5 text-xs font-semibold text-ink-950 transition hover:bg-[#fff5d2] active:translate-y-px"
+                  className="inline-flex items-center gap-2 rounded-xl bg-honey px-4 py-2.5 text-xs font-semibold text-ink-950 shadow-[0_8px_20px_-8px_rgb(245_183_59/0.5)] transition hover:bg-[#f8c65a] active:translate-y-px"
                 >
                   <Plus className="h-4 w-4" />
                   Tambah Akun Login
@@ -970,7 +1021,7 @@ export function App() {
                   type="button"
                   onClick={() => {
                     setEditingEntry(null);
-                    setFilter("API Key");
+                    setFormDefaultCategory("API Key");
                     setFormOpen(true);
                   }}
                   className="inline-flex items-center gap-2 rounded-xl border border-sky/30 bg-sky/10 px-4 py-2.5 text-xs font-semibold text-sky transition hover:bg-sky/20"
@@ -997,7 +1048,7 @@ export function App() {
       <EntryFormModal
         open={formOpen}
         initialEntry={editingEntry}
-        defaultCategory={filter === "API Key" ? "API Key" : "Login"}
+        defaultCategory={formDefaultCategory}
         onClose={() => setFormOpen(false)}
         onSave={handleSaveEntry}
       />

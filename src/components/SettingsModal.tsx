@@ -267,7 +267,7 @@ export function SettingsModal({
 
   return (
     <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/70 p-4 backdrop-blur-xs animate-fade-in">
-      <div className="max-h-[90vh] w-full max-w-xl overflow-y-auto rounded-2xl border border-ink-700 bg-ink-900 p-6 shadow-pop animate-pop-in">
+      <div className="max-h-[90vh] w-full max-w-xl overflow-x-hidden overflow-y-auto overscroll-none rounded-2xl border border-ink-700 bg-ink-900 p-6 shadow-pop animate-pop-in">
         <div className="mb-5 flex items-center justify-between">
           <div className="flex items-center gap-2">
             <Shield className="h-5 w-5 text-honey" />
@@ -317,15 +317,17 @@ export function SettingsModal({
               </span>
             </div>
             <p className="mb-3 text-xs text-cream-soft/90">
-              Kunci vault dibungkus <strong>Windows DPAPI + entropi Credential Manager</strong> dan
-              diverifikasi dengan <strong>Windows Hello</strong> (Sidik Jari / Wajah / PIN). Saat
-              aktif, <code>vaultpass-cli</code> hanya mengizinkan akses ke item berkategori{" "}
-              <strong>API Key</strong> dengan pencocokan nama/ID persis.
+              <code>vaultpass-cli</code> hanya mengizinkan akses ke item berkategori{" "}
+              <strong>API Key</strong> dengan pencocokan nama/ID persis. Jika{" "}
+              <strong>Windows Hello</strong> diaktifkan, persetujuan cukup memakai Sidik Jari/PIN;
+              jika belum aktif, CLI otomatis memunculkan dialog{" "}
+              <strong>Windows Security (Master Password)</strong> tanpa mengetik password di chat.
             </p>
             {!status.windowsHelloAvailable && !status.biometricEnabled && (
-              <p className="mb-3 rounded-lg border border-honey/25 bg-honey/10 px-3 py-2 text-xs text-honey">
-                Windows Hello belum aktif di perangkat ini. Aktifkan PIN atau Sidik Jari Windows
-                Hello di Pengaturan Windows terlebih dahulu.
+              <p className="mb-3 rounded-lg border border-sky/25 bg-sky/10 px-3 py-2 text-xs text-sky">
+                Windows Hello belum aktif di Windows kamu — <code>vaultpass-cli</code> tetap langsung
+                bisa dipakai menggunakan dialog Master Password Windows Security. Aktifkan PIN/Sidik
+                Jari di Pengaturan Windows jika ingin buka 1-sentuh.
               </p>
             )}
             <div className="flex flex-wrap items-center gap-2">
@@ -407,7 +409,7 @@ export function SettingsModal({
                 type="button"
                 disabled={busy}
                 onClick={() => void handleMoveVaultLocation()}
-                className="inline-flex items-center gap-1.5 rounded-xl bg-cream px-3.5 py-2 text-xs font-medium text-ink-950 hover:bg-[#fff5d2] disabled:opacity-50"
+                className="inline-flex items-center gap-1.5 rounded-xl bg-honey px-3.5 py-2 text-xs font-semibold text-ink-950 hover:bg-[#f8c65a] disabled:opacity-50"
               >
                 <FolderPlus className="h-3.5 w-3.5" />
                 Pindahkan Lokasi Vault...

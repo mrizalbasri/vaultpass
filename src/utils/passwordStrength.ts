@@ -1,3 +1,5 @@
+import type { EntryCategory } from "../types";
+
 export interface PasswordStrengthResult {
   score: 0 | 1 | 2 | 3 | 4;
   label: "Sangat Lemah" | "Lemah" | "Cukup" | "Kuat" | "Sangat Kuat";
@@ -5,7 +7,22 @@ export interface PasswordStrengthResult {
   barClass: string;
 }
 
-export function evaluatePasswordStrength(password: string): PasswordStrengthResult {
+function isSequentialDigits(pin: string): boolean {
+  if (pin.length < 2) return false;
+  let asc = true;
+  let desc = true;
+  for (let i = 1; i < pin.length; i += 1) {
+    const diff = pin.charCodeAt(i) - pin.charCodeAt(i - 1);
+    if (diff !== 1) asc = false;
+    if (diff !== -1) desc = false;
+  }
+  return asc || desc;
+}
+
+export function evaluatePasswordStrength(
+  password: string,
+  category?: EntryCategory
+): PasswordStrengthResult {
   if (!password) {
     return {
       score: 0,
@@ -13,6 +30,13 @@ export function evaluatePasswordStrength(password: string): PasswordStrengthResu
       colorClass: "text-mute",
       barClass: "bg-ink-600",
     };
+  }
+
+  if (category === "Finance" && /^\d{6,8}$/.test(password)) {
+    if (/^(.)\1+$/.test(password) || isSequentialDigits(password)) {
+      return strengthFromScore(1);
+    }
+    return strengthFromScore(3);
   }
 
   let points = 0;
