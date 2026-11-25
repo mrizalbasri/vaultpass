@@ -28,6 +28,7 @@ export interface VaultStatus {
   windowsHelloAvailable: boolean;
   biometricEnabled: boolean;
   passwordHint: string | null;
+  unlockCooldownSeconds: number;
 }
 
 export interface VaultEntry {

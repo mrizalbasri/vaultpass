@@ -22,6 +22,7 @@ interface LockScreenProps {
   vaultPath: string;
   biometricEnabled: boolean;
   passwordHint: string | null;
+  initialCooldownSeconds?: number;
   onCreateVault: (masterPassword: string, passwordHint?: string) => Promise<void>;
   onUnlockVault: (masterPassword: string) => Promise<void>;
   onUnlockBiometric: () => Promise<void>;
@@ -37,6 +38,7 @@ export function LockScreen({
   vaultPath,
   biometricEnabled,
   passwordHint,
+  initialCooldownSeconds = 0,
   onCreateVault,
   onUnlockVault,
   onUnlockBiometric,
@@ -50,12 +52,26 @@ export function LockScreen({
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [bioLoading, setBioLoading] = useState(false);
+  const [cooldownSeconds, setCooldownSeconds] = useState(initialCooldownSeconds);
   const [error, setError] = useState<string | null>(null);
   const [focused, setFocused] = useState(false);
   const [shocked, setShocked] = useState(false);
 
   const fieldRef = useRef<HTMLDivElement>(null);
   const strength = evaluatePasswordStrength(password);
+
+  useEffect(() => {
+    setCooldownSeconds(initialCooldownSeconds > 0 ? initialCooldownSeconds : 0);
+  }, [initialCooldownSeconds, vaultPath]);
+
+  const hasCooldown = cooldownSeconds > 0;
+  useEffect(() => {
+    if (!hasCooldown) return;
+    const id = window.setInterval(() => {
+      setCooldownSeconds((prev) => (prev <= 1 ? 0 : prev - 1));
+    }, 1000);
+    return () => window.clearInterval(id);
+  }, [hasCooldown]);
 
   useEffect(() => {
     if (!shocked) return;
@@ -132,7 +148,12 @@ export function LockScreen({
       setConfirmPassword("");
       setNewHint("");
     } catch (err) {
-      fail(typeof err === "string" ? err : "Gagal membuka vault.");
+      const msg = typeof err === "string" ? err : "Gagal membuka vault.";
+      fail(msg);
+      const waitMatch = msg.match(/(\d+)\s*detik/i);
+      if (waitMatch) {
+        setCooldownSeconds(Number(waitMatch[1]));
+      }
       if (vaultExists && passwordHint) {
         setShowHint(true);
       }
@@ -142,6 +163,7 @@ export function LockScreen({
   }
 
   const busy = loading || bioLoading;
+  const isCoolingDown = vaultExists && cooldownSeconds > 0;
 
   return (
     <div className="relative flex h-full w-full overflow-clip bg-ink-950 text-cream-soft">
@@ -376,7 +398,7 @@ export function LockScreen({
 
             <button
               type="submit"
-              disabled={busy}
+              disabled={busy || isCoolingDown}
               className="flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-honey text-sm font-semibold text-ink-950 shadow-[0_8px_24px_-8px_rgb(245_183_59/0.45)] transition hover:bg-[#f8c65a] active:translate-y-px disabled:cursor-not-allowed disabled:opacity-60"
             >
               {loading && <Loader2 className="h-4 w-4 animate-spin" />}
@@ -384,9 +406,11 @@ export function LockScreen({
                 ? vaultExists
                   ? "Membuka vault..."
                   : "Membuat vault..."
-                : vaultExists
-                  ? "Buka vault"
-                  : "Buat dan enkripsi vault"}
+                : isCoolingDown
+                  ? `Tunggu ${cooldownSeconds} detik...`
+                  : vaultExists
+                    ? "Buka vault"
+                    : "Buat dan enkripsi vault"}
             </button>
           </form>
 

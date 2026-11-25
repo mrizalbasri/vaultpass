@@ -425,6 +425,7 @@ export function App() {
           vaultPath={status.vaultPath}
           biometricEnabled={status.biometricEnabled}
           passwordHint={status.passwordHint}
+          initialCooldownSeconds={status.unlockCooldownSeconds}
           onCreateVault={handleCreateVault}
           onUnlockVault={handleUnlockVault}
           onUnlockBiometric={handleUnlockBiometric}

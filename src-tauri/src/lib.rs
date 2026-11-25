@@ -8,7 +8,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 use tauri::{Manager, State, WebviewWindow};
@@ -134,6 +134,7 @@ struct VaultStatus {
     windows_hello_available: bool,
     biometric_enabled: bool,
     password_hint: Option<String>,
+    unlock_cooldown_seconds: u64,
 }
 
 #[derive(Debug, Serialize)]
@@ -143,6 +144,60 @@ struct UpsertEntryResponse {
     entries: Vec<VaultEntrySummary>,
 }
 
+fn cooldown_duration_for_failures(failures: u32) -> Option<Duration> {
+    match failures {
+        0..=2 => None,
+        3..=4 => Some(Duration::from_secs(3)),
+        5..=6 => Some(Duration::from_secs(10)),
+        7..=9 => Some(Duration::from_secs(30)),
+        _ => Some(Duration::from_secs(60)),
+    }
+}
+
+#[derive(Debug, Default)]
+struct PasswordAttemptGuard {
+    failed_attempts: u32,
+    cooldown_until: Option<Instant>,
+}
+
+impl PasswordAttemptGuard {
+    fn remaining_cooldown_secs(&self, now: Instant) -> u64 {
+        match self.cooldown_until {
+            Some(until) if until > now => {
+                let ms = until.duration_since(now).as_millis();
+                ms.div_ceil(1_000).max(1) as u64
+            }
+            _ => 0,
+        }
+    }
+
+    fn check_allowed(&self, now: Instant) -> Result<(), String> {
+        let rem = self.remaining_cooldown_secs(now);
+        if rem > 0 {
+            Err(format!(
+                "Terlalu banyak percobaan gagal. Coba lagi dalam {rem} detik."
+            ))
+        } else {
+            Ok(())
+        }
+    }
+
+    fn record_failure(&mut self, now: Instant) -> Option<u64> {
+        self.failed_attempts = self.failed_attempts.saturating_add(1);
+        if let Some(dur) = cooldown_duration_for_failures(self.failed_attempts) {
+            self.cooldown_until = Some(now + dur);
+            Some(dur.as_secs())
+        } else {
+            None
+        }
+    }
+
+    fn reset(&mut self) {
+        self.failed_attempts = 0;
+        self.cooldown_until = None;
+    }
+}
+
 struct AppState {
     config_path: PathBuf,
     config: Mutex<AppConfig>,
@@ -150,6 +205,7 @@ struct AppState {
     clipboard_generation: Arc<AtomicU64>,
     cred_target_name: String,
     kdf_override: Option<KdfParams>,
+    auth_guard: Mutex<PasswordAttemptGuard>,
 }
 
 impl AppState {
@@ -161,7 +217,42 @@ impl AppState {
             clipboard_generation: Arc::new(AtomicU64::new(0)),
             cred_target_name: default_biometric_cred_target().to_string(),
             kdf_override: None,
+            auth_guard: Mutex::new(PasswordAttemptGuard::default()),
         }
+    }
+
+    fn current_cooldown_secs(&self) -> u64 {
+        self.auth_guard
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remaining_cooldown_secs(Instant::now())
+    }
+
+    fn check_password_attempt_allowed(&self) -> Result<(), String> {
+        self.auth_guard
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .check_allowed(Instant::now())
+    }
+
+    fn record_password_failure(&self, base_err: String) -> String {
+        let wait_secs = self
+            .auth_guard
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .record_failure(Instant::now());
+        if let Some(secs) = wait_secs {
+            format!("{base_err} Terlalu banyak percobaan gagal — tunggu {secs} detik.")
+        } else {
+            base_err
+        }
+    }
+
+    fn reset_password_attempts(&self) {
+        self.auth_guard
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .reset();
     }
 
     fn fresh_kdf(&self) -> KdfParams {
@@ -238,6 +329,7 @@ impl AppState {
             windows_hello_available,
             biometric_enabled: windows_hello_available && cfg.is_biometric_enabled_for(vault_path),
             password_hint,
+            unlock_cooldown_seconds: self.current_cooldown_secs(),
         })
     }
 
@@ -310,8 +402,11 @@ impl AppState {
         if !vault_path.exists() {
             return Err("Vault belum dibuat.".to_string());
         }
+        self.check_password_attempt_allowed()?;
 
-        let unlocked_vault = open_vault_with_password(&vault_path, &master_password)?;
+        let unlocked_vault = open_vault_with_password(&vault_path, &master_password)
+            .map_err(|e| self.record_password_failure(e))?;
+        self.reset_password_attempts();
         let summaries = summarize_entries(&unlocked_vault.payload.entries);
 
         let mut guard = self
@@ -342,6 +437,7 @@ impl AppState {
     ) -> Result<Vec<VaultEntrySummary>, String> {
         let key = dpapi_unprotect_key_for_target(&self.cred_target_name, dpapi_b64)?;
         let unlocked_vault = open_vault_with_key(vault_path, key)?;
+        self.reset_password_attempts();
         let summaries = summarize_entries(&unlocked_vault.payload.entries);
 
         let mut guard = self
@@ -604,9 +700,12 @@ impl AppState {
         if new_password.chars().count() < 10 {
             return Err("Master password baru minimal 10 karakter.".to_string());
         }
+        self.check_password_attempt_allowed()?;
 
-        let _verified = open_vault_with_password(&vault_path, &current_password)
-            .map_err(|_| "Master password saat ini salah.".to_string())?;
+        let _verified = open_vault_with_password(&vault_path, &current_password).map_err(|_| {
+            self.record_password_failure("Master password saat ini salah.".to_string())
+        })?;
+        self.reset_password_attempts();
 
         let new_key = {
             let mut guard = self
@@ -785,6 +884,7 @@ impl AppState {
     ) -> Result<VaultStatus, String> {
         let mut cfg = self.current_config()?;
         self.lock()?;
+        self.reset_password_attempts();
         cfg.vault_path = picked_path;
         self.save_config(cfg)?;
         self.status(windows_hello_available)
@@ -1422,6 +1522,102 @@ mod tests {
             );
             std::thread::sleep(Duration::from_millis(1_200));
         }
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn master_password_cooldown_escalates_blocks_and_resets() {
+        let now = Instant::now();
+        let mut guard = PasswordAttemptGuard::default();
+        assert_eq!(guard.remaining_cooldown_secs(now), 0);
+        assert!(guard.check_allowed(now).is_ok());
+
+        let expected = [
+            None,
+            None,
+            Some(3),
+            Some(3),
+            Some(10),
+            Some(10),
+            Some(30),
+            Some(30),
+            Some(30),
+            Some(60),
+        ];
+        for (idx, exp) in expected.into_iter().enumerate() {
+            assert_eq!(guard.record_failure(now), exp, "failure {}", idx + 1);
+        }
+        assert_eq!(guard.remaining_cooldown_secs(now), 60);
+        assert!(guard
+            .check_allowed(now)
+            .unwrap_err()
+            .contains("Coba lagi dalam 60 detik"));
+        assert!(guard.check_allowed(now + Duration::from_secs(60)).is_ok());
+
+        guard.reset();
+        assert_eq!(guard.failed_attempts, 0);
+        assert_eq!(guard.remaining_cooldown_secs(now), 0);
+
+        let (dir, state) = make_test_state();
+        state
+            .create_vault("correct-master-123".to_string(), None, false)
+            .unwrap();
+        state.lock().unwrap();
+
+        let err1 = state
+            .unlock_with_password("wrong-pass-1".to_string())
+            .unwrap_err();
+        assert!(!err1.contains("tunggu"));
+        let err2 = state
+            .unlock_with_password("wrong-pass-2".to_string())
+            .unwrap_err();
+        assert!(!err2.contains("tunggu"));
+        let err3 = state
+            .unlock_with_password("wrong-pass-3".to_string())
+            .unwrap_err();
+        assert!(err3.contains("tunggu 3 detik"));
+        assert!(state.status(false).unwrap().unlock_cooldown_seconds >= 1);
+
+        let blocked = state
+            .unlock_with_password("correct-master-123".to_string())
+            .unwrap_err();
+        assert!(blocked.contains("Coba lagi dalam"));
+
+        state.auth_guard.lock().unwrap().cooldown_until =
+            Some(Instant::now() - Duration::from_millis(5));
+        assert_eq!(
+            state
+                .unlock_with_password("correct-master-123".to_string())
+                .unwrap()
+                .len(),
+            0
+        );
+        assert_eq!(state.status(false).unwrap().unlock_cooldown_seconds, 0);
+
+        for _ in 0..2 {
+            let e = state
+                .change_master_password("wrong-current".to_string(), "next-master-456".to_string())
+                .unwrap_err();
+            assert!(!e.contains("tunggu"));
+        }
+        let change_cooldown = state
+            .change_master_password("wrong-current".to_string(), "next-master-456".to_string())
+            .unwrap_err();
+        assert!(change_cooldown.contains("tunggu 3 detik"));
+
+        let change_blocked = state
+            .change_master_password(
+                "correct-master-123".to_string(),
+                "next-master-456".to_string(),
+            )
+            .unwrap_err();
+        assert!(change_blocked.contains("Coba lagi dalam"));
+
+        let switched = state
+            .switch_existing_vault(dir.join("vault.vpass"), false)
+            .unwrap();
+        assert_eq!(switched.unlock_cooldown_seconds, 0);
 
         let _ = fs::remove_dir_all(&dir);
     }
