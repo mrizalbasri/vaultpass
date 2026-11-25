@@ -184,7 +184,7 @@ export function EntryFormModal({
 
   // Keep existing URL visible when editing even if the category hides URL by default.
   const shouldShowUrl = cfg.showUrl || Boolean(initialEntry?.url);
-  const strength = evaluatePasswordStrength(password);
+  const strength = evaluatePasswordStrength(password, category);
   const previewEnvVar = envVarName.trim() || suggestEnvVarName(title) || "OPENAI_API_KEY";
 
   function handleSelectCategory(nextCategory: EntryCategory) {

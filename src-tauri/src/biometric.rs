@@ -521,31 +521,32 @@ fn unpack_cred_auth_password(auth_buf: &[u8]) -> Result<Zeroizing<String>, Strin
     Ok(Zeroizing::new(String::from_utf16_lossy(&pass_buf[..end])))
 }
 
-/// Prompts the user via the native Windows Security dialog (`CredUIPromptForWindowsCredentialsW`)
-/// to enter their VaultPass Master Password when Windows Hello is unavailable or disabled.
-pub fn prompt_windows_master_password(
-    prompt_message: &str,
-    owner_hwnd: Option<isize>,
-) -> Result<Zeroizing<String>, String> {
+fn format_master_password_prompt(prompt_message: &str) -> String {
     let cleaned_msg: String = prompt_message
         .chars()
         .filter(|c| !c.is_control() || *c == '\n')
         .take(240)
         .collect();
-    let full_msg =
-        format!("{cleaned_msg}\n\nMasukkan Master Password VaultPass untuk menyetujui akses ini:");
+    format!("{cleaned_msg}\n\nMasukkan Master Password VaultPass untuk menyetujui akses ini:")
+}
 
-    let caption_w = to_wide_null("VaultPass — Izin Akses AI Agent (CLI)");
-    let msg_w = to_wide_null(&full_msg);
-    let in_buf = pack_cred_auth_buffer("VaultPass", "")?;
-    let parent_hwnd = owner_hwnd
-        .or_else(foreground_window_hwnd)
-        .map(|h| h as *mut c_void)
-        .unwrap_or(ptr::null_mut());
+fn copy_and_wipe_auth_slice(status: u32, slice: &mut [u8]) -> Option<Zeroizing<Vec<u8>>> {
+    let copied = (status == 0).then(|| Zeroizing::new(slice.to_vec()));
+    slice.zeroize();
+    copied
+}
 
+fn invoke_credui_dialog(
+    parent_hwnd: Option<isize>,
+    caption_w: &[u16],
+    msg_w: &[u16],
+    in_buf: &[u8],
+) -> (u32, Option<Zeroizing<Vec<u8>>>) {
     let ui_info = CredUiInfoW {
         cb_size: std::mem::size_of::<CredUiInfoW>() as u32,
-        hwnd_parent: parent_hwnd,
+        hwnd_parent: parent_hwnd
+            .map(|h| h as *mut c_void)
+            .unwrap_or(ptr::null_mut()),
         psz_message_text: msg_w.as_ptr(),
         psz_caption_text: caption_w.as_ptr(),
         hbm_banner: ptr::null_mut(),
@@ -570,28 +571,61 @@ pub fn prompt_windows_master_password(
         )
     };
 
+    let buf = if !out_buf.is_null() {
+        unsafe {
+            let slice = std::slice::from_raw_parts_mut(out_buf as *mut u8, out_size as usize);
+            let copied = copy_and_wipe_auth_slice(status, slice);
+            CoTaskMemFree(out_buf);
+            copied
+        }
+    } else {
+        None
+    };
+
+    (status, buf)
+}
+
+fn prompt_windows_master_password_with<F>(
+    prompt_message: &str,
+    owner_hwnd: Option<isize>,
+    run_dialog: F,
+) -> Result<Zeroizing<String>, String>
+where
+    F: FnOnce(Option<isize>, &[u16], &[u16], &[u8]) -> (u32, Option<Zeroizing<Vec<u8>>>),
+{
+    let full_msg = format_master_password_prompt(prompt_message);
+    let caption_w = to_wide_null("VaultPass — Izin Akses AI Agent (CLI)");
+    let msg_w = to_wide_null(&full_msg);
+    let in_buf = pack_cred_auth_buffer("VaultPass", "")?;
+    let resolved_hwnd = owner_hwnd
+        .or_else(foreground_window_hwnd)
+        .filter(|&h| h != 0);
+
+    let (status, out_buf) = run_dialog(resolved_hwnd, &caption_w, &msg_w, &in_buf);
+
     if status == ERROR_CANCELLED_WIN32 {
         return Err("Verifikasi Master Password dibatalkan.".to_string());
     }
-    if status != 0 || out_buf.is_null() {
+    let Some(out_bytes) = (status == 0).then_some(out_buf).flatten() else {
         return Err(format!(
             "Gagal memverifikasi lewat dialog Keamanan Windows (kode {status})."
         ));
-    }
-
-    let unpacked_result = unsafe {
-        let slice = std::slice::from_raw_parts_mut(out_buf as *mut u8, out_size as usize);
-        let res = unpack_cred_auth_password(slice);
-        slice.zeroize();
-        CoTaskMemFree(out_buf);
-        res
     };
 
-    let password = unpacked_result?;
+    let password = unpack_cred_auth_password(&out_bytes)?;
     if password.is_empty() {
         return Err("Master Password tidak boleh kosong.".to_string());
     }
     Ok(password)
+}
+
+/// Prompts the user via the native Windows Security dialog (`CredUIPromptForWindowsCredentialsW`)
+/// to enter their VaultPass Master Password when Windows Hello is unavailable or disabled.
+pub fn prompt_windows_master_password(
+    prompt_message: &str,
+    owner_hwnd: Option<isize>,
+) -> Result<Zeroizing<String>, String> {
+    prompt_windows_master_password_with(prompt_message, owner_hwnd, invoke_credui_dialog)
 }
 
 #[cfg(test)]
@@ -687,5 +721,67 @@ mod tests {
         let packed = pack_cred_auth_buffer("VaultPass", "MasterSecret#2026!").unwrap();
         let unpacked = unpack_cred_auth_password(&packed).unwrap();
         assert_eq!(unpacked.as_str(), "MasterSecret#2026!");
+    }
+
+    #[test]
+    fn prompt_windows_master_password_handles_success_cancel_and_errors() {
+        let long_msg = format!("Akses\r\x07 {}", "x".repeat(260));
+        let ok = prompt_windows_master_password_with(
+            &long_msg,
+            Some(0x1234),
+            |hwnd, cap, msg, in_buf| {
+                assert_eq!(hwnd, Some(0x1234));
+                assert!(!cap.is_empty());
+                assert!(!in_buf.is_empty());
+                let decoded_msg = String::from_utf16_lossy(&msg[..msg.len() - 1]);
+                assert!(!decoded_msg.contains('\r'));
+                assert!(!decoded_msg.contains('\x07'));
+                assert!(decoded_msg.contains("Masukkan Master Password VaultPass"));
+                let packed = pack_cred_auth_buffer("VaultPass", "SecretPass#99").unwrap();
+                (0, Some(packed))
+            },
+        )
+        .unwrap();
+        assert_eq!(ok.as_str(), "SecretPass#99");
+
+        let canceled = prompt_windows_master_password_with("Uji", None, |_, _, _, _| {
+            (ERROR_CANCELLED_WIN32, None)
+        })
+        .unwrap_err();
+        assert!(canceled.contains("dibatalkan"));
+
+        let failed_status =
+            prompt_windows_master_password_with("Uji", None, |_, _, _, _| (31, None)).unwrap_err();
+        assert!(failed_status.contains("kode 31"));
+
+        let missing_buf =
+            prompt_windows_master_password_with("Uji", None, |_, _, _, _| (0, None)).unwrap_err();
+        assert!(missing_buf.contains("kode 0"));
+
+        let corrupted = prompt_windows_master_password_with("Uji", None, |_, _, _, _| {
+            (0, Some(Zeroizing::new(vec![0xFF, 0x00, 0xAA])))
+        })
+        .unwrap_err();
+        assert!(corrupted.contains("Gagal membaca"));
+
+        let empty_pw = prompt_windows_master_password_with("Uji", None, |_, _, _, _| {
+            let packed = pack_cred_auth_buffer("VaultPass", "").unwrap();
+            (0, Some(packed))
+        })
+        .unwrap_err();
+        assert_eq!(empty_pw, "Master Password tidak boleh kosong.");
+
+        let mut sample_ok = vec![1u8, 2, 3, 4];
+        assert_eq!(
+            copy_and_wipe_auth_slice(0, &mut sample_ok)
+                .unwrap()
+                .as_slice(),
+            &[1u8, 2, 3, 4]
+        );
+        assert_eq!(sample_ok, vec![0u8, 0, 0, 0]);
+
+        let mut sample_err = vec![9u8, 8, 7];
+        assert!(copy_and_wipe_auth_slice(ERROR_CANCELLED_WIN32, &mut sample_err).is_none());
+        assert_eq!(sample_err, vec![0u8, 0, 0]);
     }
 }

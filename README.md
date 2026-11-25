@@ -23,7 +23,7 @@ VaultPass menyimpan password akun dan API key dalam satu file terenkripsi di kom
 
 Ada satu fitur yang jarang ditemui di password manager lain: **AI Agent bisa memakai API key tanpa kamu menempelkan key mentah ke chat**. Agent menjalankan perintah CLI, kamu menyetujuinya dengan Windows Hello, dan key hanya masuk ke proses yang diminta.
 
-> **Status: pre-release.** Aplikasi berjalan dan teruji dasar, tapi belum diaudit pihak ketiga dan belum ada installer. Pertimbangkan hal itu sebelum menyimpan data yang sangat penting.
+> **Status: pre-release.** Aplikasi berjalan, tersedia installer Windows, dan teruji dasar, namun belum diaudit pihak ketiga maupun menggunakan sertifikat *code-signing* berbayar. Pertimbangkan hal itu sebelum menyimpan data yang sangat penting.
 
 ## Fitur
 
@@ -160,12 +160,12 @@ vaultpass/
 
 ## Status dan rencana
 
-Sudah ada: enkripsi vault, Windows Hello, CLI untuk AI Agent, auto-lock dengan peringatan, backup terenkripsi, dan CI dengan coverage.
+Sudah ada: enkripsi vault, Windows Hello, CLI untuk AI Agent, form dinamis per kategori, auto-lock dengan peringatan, backup terenkripsi, installer Windows (`-setup.exe`, `.msi`, `install.ps1`), dan CI dengan coverage.
 
 Belum ada:
-- Installer dan rilis resmi
+- Sertifikat *code-signing* Windows (agar bebas peringatan SmartScreen)
 - Jeda (cooldown) setelah beberapa percobaan password salah
-- Tes untuk lapisan command Tauri dan untuk frontend
+- Tes otomatis untuk lapisan frontend
 - Dukungan macOS dan Linux
 
 ## Berkontribusi
