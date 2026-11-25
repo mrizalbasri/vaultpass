@@ -14,6 +14,8 @@ import {
   ShieldCheck,
 } from "lucide-react";
 import { evaluatePasswordStrength } from "../utils/passwordStrength";
+import type { AppUpdaterState } from "../utils/useAppUpdater";
+import { UpdateNoticeCard } from "./UpdateNoticeCard";
 import { VaultLogo } from "./VaultLogo";
 import { VaultMascot, type MascotMood } from "./VaultMascot";
 
@@ -23,6 +25,7 @@ interface LockScreenProps {
   biometricEnabled: boolean;
   passwordHint: string | null;
   initialCooldownSeconds?: number;
+  updater?: AppUpdaterState;
   onCreateVault: (masterPassword: string, passwordHint?: string) => Promise<void>;
   onUnlockVault: (masterPassword: string) => Promise<void>;
   onUnlockBiometric: () => Promise<void>;
@@ -39,6 +42,7 @@ export function LockScreen({
   biometricEnabled,
   passwordHint,
   initialCooldownSeconds = 0,
+  updater,
   onCreateVault,
   onUnlockVault,
   onUnlockBiometric,
@@ -222,6 +226,7 @@ export function LockScreen({
       {/* Form side */}
       <section className="relative flex w-full shrink-0 overflow-x-hidden overflow-y-auto overscroll-none border-ink-700 bg-ink-900 md:w-[460px] md:border-l">
         <div className="m-auto w-full max-w-sm px-7 py-9">
+          <UpdateNoticeCard updater={updater} variant="banner" />
           <div className="mb-7 animate-fade-up">
             <VaultLogo size={46} mood={mood} className="mb-5 md:hidden" />
             <h2 className="font-display text-3xl font-semibold tracking-tight text-cream">

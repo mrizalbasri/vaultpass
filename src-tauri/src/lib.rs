@@ -121,9 +121,36 @@ pub fn load_or_init_config() -> Result<(PathBuf, AppConfig), String> {
     load_or_init_config_in(&default_app_data_dir())
 }
 
+fn parse_semver_triplet(raw: &str) -> Option<(u32, u32, u32)> {
+    let core = raw.trim().trim_start_matches('v').split('-').next()?;
+    let mut parts = core.split('.');
+    let major = parts.next()?.parse().ok()?;
+    let minor = parts.next()?.parse().ok()?;
+    let patch = parts.next()?.parse().ok()?;
+    if parts.next().is_some() {
+        return None;
+    }
+    Some((major, minor, patch))
+}
+
+pub fn current_app_version() -> &'static str {
+    env!("CARGO_PKG_VERSION")
+}
+
+pub fn is_newer_release_version(current: &str, candidate: &str) -> bool {
+    match (
+        parse_semver_triplet(current),
+        parse_semver_triplet(candidate),
+    ) {
+        (Some(cur), Some(cand)) => cand > cur,
+        _ => false,
+    }
+}
+
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct VaultStatus {
+    app_version: String,
     exists: bool,
     unlocked: bool,
     vault_path: String,
@@ -319,6 +346,7 @@ impl AppState {
             };
 
         Ok(VaultStatus {
+            app_version: current_app_version().to_string(),
             exists: vault_path.exists(),
             unlocked,
             vault_path: vault_path.to_string_lossy().to_string(),
@@ -1146,6 +1174,8 @@ fn pick_existing_vault_file(state: State<'_, AppState>) -> Result<Option<VaultSt
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
             let (config_path, cfg) = load_or_init_config()?;
             app.manage(AppState::new(config_path, cfg));
@@ -1619,6 +1649,25 @@ mod tests {
             .unwrap();
         assert_eq!(switched.unlock_cooldown_seconds, 0);
 
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn version_helpers_and_status_version_work() {
+        let current = current_app_version();
+        assert!(!current.is_empty());
+        assert!(parse_semver_triplet(current).is_some());
+        assert!(is_newer_release_version("0.1.0", "0.1.1"));
+        assert!(is_newer_release_version("v0.1.0", "v0.2.0-rc.1"));
+        assert!(!is_newer_release_version("0.1.1", "0.1.1"));
+        assert!(!is_newer_release_version("0.2.0", "0.1.9"));
+        assert!(!is_newer_release_version("invalid", "0.1.1"));
+        assert!(!is_newer_release_version("0.1.0", "1.2"));
+        assert!(!is_newer_release_version("0.1.0", "1.2.3.4"));
+
+        let (dir, state) = make_test_state();
+        let st = state.status(false).unwrap();
+        assert_eq!(st.app_version, current);
         let _ = fs::remove_dir_all(&dir);
     }
 }

@@ -26,6 +26,7 @@ import { LockScreen } from "./components/LockScreen";
 import { PasswordGeneratorModal } from "./components/PasswordGeneratorModal";
 import { SessionTimer } from "./components/SessionTimer";
 import { SettingsModal } from "./components/SettingsModal";
+import { UpdateNoticeCard } from "./components/UpdateNoticeCard";
 import { VaultLogo } from "./components/VaultLogo";
 import { VaultMascot } from "./components/VaultMascot";
 import {
@@ -37,6 +38,7 @@ import {
 } from "./types";
 import { CATEGORY_FORM_CONFIG } from "./utils/categoryConfig";
 import { strengthFromScore } from "./utils/passwordStrength";
+import { useAppUpdater } from "./utils/useAppUpdater";
 
 type SidebarFilter = "all" | "favorites" | "weak" | EntryCategory;
 
@@ -159,6 +161,7 @@ export function App() {
   const [toast, setToast] = useState<string | null>(null);
 
   const searchInputRef = useRef<HTMLInputElement>(null);
+  const updater = useAppUpdater();
 
   const showToast = useCallback((msg: string) => {
     setToast(msg);
@@ -426,6 +429,7 @@ export function App() {
           biometricEnabled={status.biometricEnabled}
           passwordHint={status.passwordHint}
           initialCooldownSeconds={status.unlockCooldownSeconds}
+          updater={updater}
           onCreateVault={handleCreateVault}
           onUnlockVault={handleUnlockVault}
           onUnlockBiometric={handleUnlockBiometric}
@@ -542,6 +546,7 @@ export function App() {
         </div>
 
         <div className="space-y-1 border-t border-ink-700/80 p-3">
+          <UpdateNoticeCard updater={updater} variant="sidebar" />
           <SessionTimer
             minutes={status.autoLockMinutes}
             onLock={() => void handleLockVault()}
@@ -1063,6 +1068,7 @@ export function App() {
       <SettingsModal
         open={settingsOpen}
         status={status}
+        updater={updater}
         onClose={() => setSettingsOpen(false)}
         onStatusChange={setStatus}
         onEntriesImported={async () => {

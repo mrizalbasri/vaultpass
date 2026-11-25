@@ -51,5 +51,16 @@
         "installerHooks": "windows/hooks.nsh"
       }
     }
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDkyNEI5OThDMzcwRDM1QzEKUldUQk5RMDNqSmxMa3AzSngxT3FlMUp6L1dpUVZkTkI2S3VTV0Y2Z1lUYi8xU0FNY2xUTGhZRjkK",
+      "endpoints": [
+        "https://github.com/mrizalbasri/vaultpass/releases/latest/download/latest.json"
+      ],
+      "windows": {
+        "installMode": "passive"
+      }
+    }
   }
 }
