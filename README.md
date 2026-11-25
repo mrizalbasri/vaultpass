@@ -33,6 +33,7 @@ Ada satu fitur yang jarang ditemui di password manager lain: **AI Agent bisa mem
 - Penyimpanan atomik dengan salinan `.bak` otomatis (ikut dienkripsi ulang dengan nonce baru saat ganti master password)
 - Clipboard dibersihkan otomatis dan ditandai agar tidak terekam di **Windows Clipboard History (`Win+V`)** maupun Cloud Clipboard
 - Buka vault dengan **Windows Hello** (sidik jari, wajah, atau PIN) tanpa fallback dialog biasa; kunci dibungkus Windows DPAPI + entropi acak di Windows Credential Manager
+- Jeda otomatis (*cooldown* progresif) setelah beberapa percobaan master password salah
 
 **Pemakaian harian**
 - Akun login dan **API key** dalam satu tempat, dengan kategori, favorit, dan pencarian cepat (`Ctrl+K`)
@@ -160,11 +161,10 @@ vaultpass/
 
 ## Status dan rencana
 
-Sudah ada: enkripsi vault, Windows Hello, CLI untuk AI Agent, form dinamis per kategori, auto-lock dengan peringatan, backup terenkripsi, installer Windows (`-setup.exe`, `.msi`, `install.ps1`), dan CI dengan coverage.
+Sudah ada: enkripsi vault, Windows Hello, CLI untuk AI Agent, form dinamis per kategori, jeda *cooldown* percobaan password, auto-lock dengan peringatan, backup terenkripsi, installer Windows (`-setup.exe`, `.msi`, `install.ps1`), dan CI dengan coverage.
 
 Belum ada:
 - Sertifikat *code-signing* Windows (agar bebas peringatan SmartScreen)
-- Jeda (cooldown) setelah beberapa percobaan password salah
 - Tes otomatis untuk lapisan frontend
 - Dukungan macOS dan Linux
 
