@@ -12,12 +12,14 @@
   "app": {
     "windows": [
       {
-        "title": "VaultPass — Personal Password Manager",
+        "title": "VaultPass",
         "width": 1080,
         "height": 720,
         "minWidth": 820,
         "minHeight": 560,
-        "resizable": true
+        "resizable": true,
+        "zoomHotkeysEnabled": false,
+        "additionalBrowserArgs": "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection --disable-pinch --overscroll-history-navigation=0"
       }
     ],
     "security": {

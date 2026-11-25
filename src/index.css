@@ -13,23 +13,23 @@
   --font-sans: "Geist Variable", ui-sans-serif, system-ui, sans-serif;
   --font-mono: "Geist Mono Variable", ui-monospace, "Cascadia Code", monospace;
 
-  --color-ink-950: #0b0a08;
-  --color-ink-900: #11100d;
-  --color-ink-850: #171510;
-  --color-ink-800: #1d1b16;
-  --color-ink-700: #2a2721;
-  --color-ink-600: #3a362e;
-  --color-ink-500: #57523f;
+  --color-ink-950: #0d0f14;
+  --color-ink-900: #13161f;
+  --color-ink-850: #191d29;
+  --color-ink-800: #222838;
+  --color-ink-700: #2d3548;
+  --color-ink-600: #3d4760;
+  --color-ink-500: #556382;
 
-  --color-cream: #f3e9c6;
-  --color-cream-soft: #dcd1ae;
-  --color-mute: #9b927b;
-  --color-faint: #6c6554;
+  --color-cream: #f8fafc;
+  --color-cream-soft: #d9e0ec;
+  --color-mute: #94a0b8;
+  --color-faint: #64708a;
 
-  --color-honey: #e9b44c;
-  --color-coral: #ef7060;
-  --color-sage: #93d3a2;
-  --color-sky: #86c5d8;
+  --color-honey: #f5b73b;
+  --color-coral: #f46868;
+  --color-sage: #3dd68c;
+  --color-sky: #4cc3fa;
 
   --radius-card: 1.125rem;
 
@@ -145,16 +145,35 @@
   html,
   body,
   #root {
+    width: 100%;
     height: 100%;
+    overflow: hidden;
+    overscroll-behavior: none;
   }
 
   body {
+    position: fixed;
+    inset: 0;
     background: var(--color-ink-950);
     color: var(--color-cream-soft);
     font-family: var(--font-sans);
     font-feature-settings: "ss01", "cv11";
     -webkit-font-smoothing: antialiased;
     text-rendering: optimizeLegibility;
+    user-select: none;
+  }
+
+  input,
+  textarea,
+  code,
+  pre,
+  [data-selectable] {
+    user-select: text;
+  }
+
+  option {
+    background-color: var(--color-ink-900);
+    color: var(--color-cream);
   }
 
   ::selection {
@@ -198,14 +217,6 @@
 
   .hairline {
     box-shadow: 0 1px 0 0 rgb(255 255 255 / 0.04) inset;
-  }
-
-  .dial-rings {
-    background-image:
-      radial-gradient(circle at 50% 50%, transparent 0 140px, rgb(243 233 198 / 0.05) 141px 142px, transparent 143px),
-      radial-gradient(circle at 50% 50%, transparent 0 210px, rgb(243 233 198 / 0.04) 211px 212px, transparent 213px),
-      radial-gradient(circle at 50% 50%, transparent 0 290px, rgb(243 233 198 / 0.03) 291px 292px, transparent 293px),
-      radial-gradient(circle at 50% 50%, transparent 0 380px, rgb(243 233 198 / 0.025) 381px 382px, transparent 383px);
   }
 }
 

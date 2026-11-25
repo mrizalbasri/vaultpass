@@ -206,7 +206,7 @@ export function PasswordGeneratorModal({
                 onUsePassword(generated);
                 onClose();
               }}
-              className="rounded-xl bg-cream px-4 py-2 text-xs font-medium text-ink-950 hover:bg-[#fff5d2]"
+              className="rounded-xl bg-honey px-4 py-2 text-xs font-semibold text-ink-950 hover:bg-[#f8c65a]"
             >
               Pakai Password Ini
             </button>

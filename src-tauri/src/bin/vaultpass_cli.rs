@@ -1,13 +1,16 @@
 use std::env;
+use std::path::Path;
 use std::process::{Command, ExitCode};
 
 use serde::Serialize;
 use vaultpass_lib::biometric::{
     dpapi_unprotect_key, foreground_window_hwnd, is_windows_hello_available,
-    request_windows_hello_verification, sanitize_prompt_label,
+    prompt_windows_master_password, request_windows_hello_verification, sanitize_prompt_label,
 };
-use vaultpass_lib::load_or_init_config;
-use vaultpass_lib::vault::{open_vault_with_key, validate_env_var_name, VaultEntry};
+use vaultpass_lib::vault::{
+    open_vault_with_key, open_vault_with_password, validate_env_var_name, UnlockedVault, VaultEntry,
+};
+use vaultpass_lib::{load_or_init_config, AppConfig};
 use zeroize::Zeroizing;
 
 const API_KEY_CATEGORY: &str = "API Key";
@@ -17,6 +20,8 @@ const API_KEY_CATEGORY: &str = "API Key";
 struct CliStatus {
     vault_path: String,
     exists: bool,
+    cli_ready: bool,
+    auth_mode: &'static str,
     biometric_enabled: bool,
     windows_hello_available: bool,
 }
@@ -41,6 +46,9 @@ fn print_usage() {
            vaultpass-cli list [--query <kata-kunci>]\n  \
            vaultpass-cli get <nama-atau-id-persis> --field <key|password|username|url|env|notes|json>\n  \
            vaultpass-cli run --key <nama-atau-id-persis> [--env <NAMA_ENV>] -- <perintah> [argumen...]\n\n\
+         Otentikasi Persetujuan:\n  \
+           - Jika Windows Hello aktif: verifikasi sidik jari / wajah / PIN Windows Hello.\n  \
+           - Jika Windows Hello belum aktif: otomatis memunculkan dialog Windows Security untuk Master Password.\n\n\
          Contoh untuk AI Agent (Validasi / Pakai API Key tanpa bocor di log chat):\n  \
            vaultpass-cli run --key \"OpenAI\" --env OPENAI_API_KEY -- python test_api.py\n  \
            vaultpass-cli get \"OpenAI\" --field key"
@@ -133,6 +141,34 @@ fn find_exact_api_key_entry<'a>(
     }
 }
 
+fn unlock_vault_for_cli(
+    vault_path: &Path,
+    cfg: &AppConfig,
+    bio_enabled: bool,
+    prompt_message: &str,
+) -> Result<UnlockedVault, String> {
+    if !vault_path.exists() {
+        return Err(
+            "File vault belum ditemukan. Buka aplikasi VaultPass terlebih dahulu untuk membuat vault."
+                .to_string(),
+        );
+    }
+
+    let owner_hwnd = foreground_window_hwnd();
+    if bio_enabled {
+        request_windows_hello_verification(prompt_message, owner_hwnd)?;
+        let dpapi_b64 = cfg
+            .biometric_key_dpapi_b64
+            .as_ref()
+            .ok_or_else(|| "Kunci biometrik tidak ditemukan.".to_string())?;
+        let key = dpapi_unprotect_key(dpapi_b64)?;
+        open_vault_with_key(vault_path, key)
+    } else {
+        let master_password = prompt_windows_master_password(prompt_message, owner_hwnd)?;
+        open_vault_with_password(vault_path, &master_password)
+    }
+}
+
 fn run_cli() -> Result<u8, String> {
     let args: Vec<String> = env::args().skip(1).collect();
     if args.is_empty() || args[0] == "--help" || args[0] == "-h" {
@@ -147,9 +183,16 @@ fn run_cli() -> Result<u8, String> {
 
     match args[0].as_str() {
         "status" => {
+            let exists = vault_path.exists();
             let status = CliStatus {
                 vault_path: vault_path.to_string_lossy().to_string(),
-                exists: vault_path.exists(),
+                exists,
+                cli_ready: exists,
+                auth_mode: if bio_enabled {
+                    "windows-hello"
+                } else {
+                    "windows-security-password"
+                },
                 biometric_enabled: bio_enabled,
                 windows_hello_available: hello_available,
             };
@@ -160,28 +203,17 @@ fn run_cli() -> Result<u8, String> {
             Ok(0)
         }
         "list" => {
-            if !bio_enabled {
-                return Err(
-                    "Akses Windows Hello & AI Agent belum aktif. Buka aplikasi VaultPass -> Pengaturan & Keamanan -> Aktifkan Windows Hello."
-                        .to_string(),
-                );
-            }
             let query = args
                 .windows(2)
                 .find(|w| w[0] == "--query" || w[0] == "-q")
                 .map(|w| w[1].to_lowercase());
 
-            request_windows_hello_verification(
+            let unlocked = unlock_vault_for_cli(
+                vault_path,
+                &cfg,
+                bio_enabled,
                 "AI Agent (VaultPass CLI) meminta izin melihat daftar item kategori API Key",
-                foreground_window_hwnd(),
             )?;
-
-            let dpapi_b64 = cfg
-                .biometric_key_dpapi_b64
-                .as_ref()
-                .ok_or_else(|| "Kunci biometrik tidak ditemukan.".to_string())?;
-            let key = dpapi_unprotect_key(dpapi_b64)?;
-            let unlocked = open_vault_with_key(vault_path, key)?;
 
             let list: Vec<CliAccountSummary<'_>> = unlocked
                 .payload
@@ -222,12 +254,6 @@ fn run_cli() -> Result<u8, String> {
                         .to_string(),
                 );
             }
-            if !bio_enabled {
-                return Err(
-                    "Akses Windows Hello & AI Agent belum aktif. Buka aplikasi VaultPass -> Pengaturan & Keamanan -> Aktifkan Windows Hello."
-                        .to_string(),
-                );
-            }
 
             let target = &args[1];
             let field = args
@@ -249,19 +275,14 @@ fn run_cli() -> Result<u8, String> {
             }
 
             let safe_target = sanitize_prompt_label(target);
-            request_windows_hello_verification(
+            let unlocked = unlock_vault_for_cli(
+                vault_path,
+                &cfg,
+                bio_enabled,
                 &format!(
                     "AI Agent (VaultPass CLI) meminta membaca field '{field}' dari API Key '{safe_target}'"
                 ),
-                foreground_window_hwnd(),
             )?;
-
-            let dpapi_b64 = cfg
-                .biometric_key_dpapi_b64
-                .as_ref()
-                .ok_or_else(|| "Kunci biometrik tidak ditemukan.".to_string())?;
-            let key = dpapi_unprotect_key(dpapi_b64)?;
-            let unlocked = open_vault_with_key(vault_path, key)?;
             let entry = find_exact_api_key_entry(&unlocked.payload.entries, target)?;
 
             match field {
@@ -282,13 +303,6 @@ fn run_cli() -> Result<u8, String> {
             Ok(0)
         }
         "run" => {
-            if !bio_enabled {
-                return Err(
-                    "Akses Windows Hello & AI Agent belum aktif. Buka aplikasi VaultPass -> Pengaturan & Keamanan -> Aktifkan Windows Hello."
-                        .to_string(),
-                );
-            }
-
             let sep_pos = args.iter().position(|a| a == "--").ok_or_else(|| {
                 "Pisahkan perintah yang ingin dijalankan dengan '--', contoh: vaultpass-cli run --key OpenAI -- python app.py"
                     .to_string()
@@ -318,20 +332,15 @@ fn run_cli() -> Result<u8, String> {
 
             let safe_cmd = sanitize_prompt_label(&cmd_parts[0]);
             let safe_target = sanitize_prompt_label(&target);
-            request_windows_hello_verification(
-                &format!(
-                    "AI Agent ingin menjalankan '{safe_cmd}' dengan menyuntikkan API Key '{safe_target}'"
-                ),
-                foreground_window_hwnd(),
-            )?;
-
             let (env_var, secret_value) = {
-                let dpapi_b64 = cfg
-                    .biometric_key_dpapi_b64
-                    .as_ref()
-                    .ok_or_else(|| "Kunci biometrik tidak ditemukan.".to_string())?;
-                let key = dpapi_unprotect_key(dpapi_b64)?;
-                let unlocked = open_vault_with_key(vault_path, key)?;
+                let unlocked = unlock_vault_for_cli(
+                    vault_path,
+                    &cfg,
+                    bio_enabled,
+                    &format!(
+                        "AI Agent ingin menjalankan '{safe_cmd}' dengan menyuntikkan API Key '{safe_target}'"
+                    ),
+                )?;
                 let entry = find_exact_api_key_entry(&unlocked.payload.entries, &target)?;
 
                 let resolved_env = match custom_env {

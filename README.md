@@ -76,7 +76,7 @@ Untuk melaporkan kerentanan, lihat [SECURITY.md](SECURITY.md).
 
 ## Akses AI Agent lewat CLI
 
-`vaultpass-cli` memungkinkan AI Agent memakai item berkategori **API Key** dari vault dengan persetujuanmu (item `Login`, `Finance`, dan kategori lain tidak dapat diakses lewat CLI). Fitur ini perlu diaktifkan dulu di **Pengaturan & Keamanan → Windows Hello**.
+`vaultpass-cli` memungkinkan AI Agent memakai item berkategori **API Key** dari vault dengan persetujuanmu (item `Login`, `Finance`, dan kategori lain tidak dapat diakses lewat CLI). Jika **Windows Hello** diaktifkan di **Pengaturan & Keamanan**, persetujuan menggunakan Sidik Jari/Wajah/PIN; jika Windows Hello belum aktif di perangkat, CLI otomatis memunculkan dialog **Windows Security (Master Password)**.
 
 ```powershell
 # Daftar item kategori API Key (opsional: cari dengan kata kunci)
