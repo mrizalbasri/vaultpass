@@ -7,17 +7,21 @@ import {
   FolderPlus,
   KeyRound,
   Lightbulb,
+  Loader2,
+  RefreshCw,
   Shield,
   Upload,
   X,
 } from "lucide-react";
 import { vaultApi } from "../api";
 import type { VaultStatus } from "../types";
+import type { AppUpdaterState } from "../utils/useAppUpdater";
 import { useEscapeKey } from "../utils/useEscapeKey";
 
 interface SettingsModalProps {
   open: boolean;
   status: VaultStatus;
+  updater?: AppUpdaterState;
   onClose: () => void;
   onStatusChange: (nextStatus: VaultStatus) => void;
   onEntriesImported: () => Promise<void>;
@@ -26,6 +30,7 @@ interface SettingsModalProps {
 export function SettingsModal({
   open,
   status,
+  updater,
   onClose,
   onStatusChange,
   onEntriesImported,
@@ -297,6 +302,81 @@ export function SettingsModal({
         )}
 
         <div className="space-y-6">
+          {/* In-App Auto-Update */}
+          {updater && (
+            <div className="rounded-xl border border-sky/25 bg-sky/[0.04] p-4">
+              <div className="mb-2 flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2">
+                  <RefreshCw className="h-4 w-4 text-sky" />
+                  <h3 className="text-xs font-semibold tracking-wider text-sky uppercase">
+                    Pembaruan Aplikasi
+                  </h3>
+                </div>
+                <span className="rounded-full border border-ink-600 bg-ink-850 px-2.5 py-0.5 font-mono text-[10px] font-medium text-cream-soft">
+                  v{status.appVersion}
+                </span>
+              </div>
+              <p className="mb-3 text-xs text-cream-soft/90">
+                VaultPass memeriksa pembaruan bertanda tangan digital (Ed25519) dari GitHub
+                Releases tanpa mengirim data vault.
+              </p>
+
+              {updater.feedback && (
+                <div
+                  className={`mb-3 rounded-lg border px-3 py-2 text-xs ${
+                    updater.feedback.type === "err"
+                      ? "border-coral/30 bg-coral/10 text-coral"
+                      : updater.feedback.type === "ok"
+                        ? "border-sage/30 bg-sage/10 text-sage"
+                        : "border-sky/30 bg-sky/10 text-sky"
+                  }`}
+                >
+                  {updater.feedback.text}
+                </div>
+              )}
+
+              {updater.installing && (
+                <div className="mb-3 h-1.5 w-full overflow-hidden rounded-full bg-ink-800">
+                  <div
+                    className="h-full rounded-full bg-sky transition-[width] duration-200"
+                    style={{ width: `${updater.progressPercent ?? 0}%` }}
+                  />
+                </div>
+              )}
+
+              <div className="flex flex-wrap items-center gap-2">
+                {updater.availableUpdate && (
+                  <button
+                    type="button"
+                    disabled={busy || updater.installing}
+                    onClick={() => void updater.installUpdate()}
+                    className="inline-flex items-center gap-1.5 rounded-xl bg-sky px-3.5 py-2 text-xs font-semibold text-ink-950 transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    {updater.installing ? (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    ) : (
+                      <Download className="h-3.5 w-3.5" />
+                    )}
+                    {updater.installing
+                      ? `Mengunduh ${updater.progressPercent ?? 0}%...`
+                      : `Pasang Update v${updater.availableUpdate.version} & Restart`}
+                  </button>
+                )}
+                <button
+                  type="button"
+                  disabled={busy || updater.checking || updater.installing}
+                  onClick={() => void updater.checkForUpdate(true)}
+                  className="inline-flex items-center gap-1.5 rounded-xl border border-ink-600 bg-ink-850 px-3.5 py-2 text-xs font-medium text-cream hover:bg-ink-700 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  <RefreshCw
+                    className={`h-3.5 w-3.5 ${updater.checking ? "animate-spin text-sky" : ""}`}
+                  />
+                  {updater.checking ? "Memeriksa..." : "Cek Pembaruan"}
+                </button>
+              </div>
+            </div>
+          )}
+
           {/* Windows Hello Biometrics & AI Agent CLI Access */}
           <div className="rounded-xl border border-sage/25 bg-sage/5 p-4">
             <div className="mb-2 flex items-center justify-between gap-2">

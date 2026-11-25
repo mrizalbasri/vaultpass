@@ -18,6 +18,7 @@ export const ENTRY_CATEGORIES: EntryCategory[] = [
 ];
 
 export interface VaultStatus {
+  appVersion: string;
   exists: boolean;
   unlocked: boolean;
   vaultPath: string;

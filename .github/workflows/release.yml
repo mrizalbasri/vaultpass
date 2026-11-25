@@ -35,8 +35,16 @@ jobs:
       - name: Install frontend dependencies
         run: npm ci
 
-      - name: Build Tauri installers (NSIS + MSI + vaultpass-cli sidecar)
-        run: npm run tauri:build
+      - name: Build Tauri installers (NSIS + MSI + updater signature + vaultpass-cli sidecar)
+        shell: pwsh
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ""
+        run: |
+          $updaterCfg = Join-Path $env:RUNNER_TEMP "tauri.updater.json"
+          '{"bundle":{"createUpdaterArtifacts":true}}' | Set-Content -Encoding utf8NoBOM $updaterCfg
+          node scripts/prepare-cli-sidecar.mjs
+          npx tauri build --config src-tauri/tauri.bundle.json --config $updaterCfg
 
       - name: Stage release artifacts and SHA256 checksums
         shell: pwsh
@@ -53,7 +61,13 @@ jobs:
           $outDir = Join-Path $PWD "release-assets"
           New-Item -ItemType Directory -Force $outDir | Out-Null
 
-          Get-ChildItem "src-tauri/target/release/bundle/nsis/*-setup.exe" | Copy-Item -Destination $outDir
+          $setupExe = Get-ChildItem "src-tauri/target/release/bundle/nsis/*-setup.exe" | Select-Object -First 1
+          $setupSig = Get-ChildItem "src-tauri/target/release/bundle/nsis/*-setup.exe.sig" | Select-Object -First 1
+          if (-not $setupExe -or -not $setupSig) {
+            throw "Expected NSIS setup.exe and setup.exe.sig updater artifacts were not produced."
+          }
+          Copy-Item $setupExe.FullName -Destination $outDir
+          Copy-Item $setupSig.FullName -Destination $outDir
           Get-ChildItem "src-tauri/target/release/bundle/msi/*.msi" | Copy-Item -Destination $outDir
 
           $portableStage = Join-Path $PWD "portable-stage"
@@ -64,6 +78,21 @@ jobs:
 
           $portableZip = Join-Path $outDir "VaultPass_${ver}_x64_portable.zip"
           Compress-Archive -Path "$portableStage/*" -DestinationPath $portableZip -Force
+
+          $sigContent = (Get-Content -Raw $setupSig.FullName).Trim()
+          $downloadUrl = "https://github.com/${{ github.repository }}/releases/download/$rawTag/$($setupExe.Name)"
+          $latestManifest = [ordered]@{
+            version   = $ver
+            notes     = "Pembaruan VaultPass $rawTag"
+            pub_date  = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
+            platforms = [ordered]@{
+              "windows-x86_64" = [ordered]@{
+                signature = $sigContent
+                url       = $downloadUrl
+              }
+            }
+          }
+          $latestManifest | ConvertTo-Json -Depth 5 | Set-Content -Encoding utf8NoBOM (Join-Path $outDir "latest.json")
 
           Push-Location $outDir
           $hashes = Get-ChildItem -File | Sort-Object Name | ForEach-Object {
@@ -79,7 +108,7 @@ jobs:
         with:
           tag_name: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
           name: VaultPass ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
-          prerelease: true
+          prerelease: ${{ contains(github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name, '-') }}
           generate_release_notes: true
           body: |
             ### Unduhan Windows (64-bit)

@@ -42,6 +42,7 @@ Ada satu fitur yang jarang ditemui di password manager lain: **AI Agent bisa mem
 - **Auto-lock** saat idle dengan hitung mundur dan peringatan 30 detik sebelum terkunci
 - Ekspor dan impor backup terenkripsi (`.vpass`), serta lokasi file vault yang bisa kamu pilih sendiri (default di `%LOCALAPPDATA%\com.rizal.vaultpass\vault.vpass`)
 - Pengingat master password (opsional) di layar login
+- Pembaruan otomatis dari dalam aplikasi (*In-App Auto-Update*) bertanda tangan digital Ed25519 dari GitHub Releases
 
 **Untuk AI Agent**
 - CLI `vaultpass-cli` khusus kategori **API Key** (akun `Login`/`Finance` tetap terisolasi dari CLI) dengan pencocokan nama/ID persis dan persetujuan Windows Hello
